@@ -1,4 +1,10 @@
+#define NIOB_INTERNAL
 #include "niob.h"
+
+#ifdef NIOB_DEBUG
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 #define ASSERT(EX) ((EX) ? 1 : *(volatile int*)0)
 
@@ -31,7 +37,20 @@
 #define I32_MIN (i32)(1 << 31)
 #define I64_MIN (i64)(1 << 63)
 
+void*
+System_AllocateMemory(umm size)
+{
+    return malloc(size);
+}
+
+void
+System_FreeMemory(void* ptr)
+{
+    free(ptr);
+}
+
 #include "memory.h"
+
 #include "lexer.h"
 #include "parser.h"
 #include "sema.h"
