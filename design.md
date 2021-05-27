@@ -92,10 +92,9 @@ foreign import "import_path";
 include "include_path";
 
 // this is a using declaration
-using expression;                 // imports the symbols in expression into the current scope                    (e.g. using a;      // a.x can now be accessed as x  )
-using expression0 as expression1; // imports the symbols in expression0 into a new scope accessed by expression1 (e.g. using a as b; // a.x can now be accessed as b.x)
+using expression; // imports the symbols in expression into the current scope (e.g. using a;      // a.x can now be accessed as x  )
 
-// using also works on other declarations (but renaming with "as" is not allowed on variable and constant declarations)
+// using also works on other declarations
 using name : type;              // equivalent to: name : type; using name;
 using name : type : expression; // equivalent to: name : type : expression; using name;
 
@@ -185,16 +184,15 @@ defer {}
 Expressions:
 
 operators (all binary operators are left-associative):
-  .,
-  slice[:], subscript[], call()
-  +, -, &, *, ~, !
-  infix call
-  *, /, %, &, >>, << (logical right and left shift)
-  +, -, |, ^
-  ==, !=, <=, >=, <, >
-  &&,
-  ||,
-  ?:
+8.  .,
+7.  slice[:], subscript[], call()
+6.  +, -, &, *, ~, !
+5.  *, /, %, &, >>, <<, infix call, ->
+4.  +, -, |, ^
+3.  ==, !=, <=, >=, <, >
+2.  &&,
+1.  ||,
+//  ?:
 
 primary expressions:
   idenfifier

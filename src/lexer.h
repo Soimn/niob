@@ -1,21 +1,21 @@
 void
 Lexer_ReportError(Error_Report* error_report, u32 line, u32 offset_to_line_start, u32 offset, u32 error_length, String message)
 {
-    *error_report = (Error_Report){
-        .line    = line,
-        .column  = (offset - offset_to_line_start) + 1,
-        .length  = error_length,
-        .message = message,
-    };
+    if (error_report)
+    {
+        *error_report = (Error_Report){
+            .line    = line,
+            .column  = (offset - offset_to_line_start) + 1,
+            .length  = error_length,
+            .message = message,
+        };
+    }
 }
 
 API_FUNC bool
-LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, Bucket_Array(Token)* tokens, Error_Report* error_report)
+LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, Error_Report* error_report, Token** tokens)
 {
     ASSERT(string.size >= 1 && string.data[string.size - 1] == 0);
-    
-    ASSERT(tokens->arena == 0 && tokens->current == 0);
-    *tokens = BUCKET_ARRAY_INIT(token_arena, Token, 256);
     
     bool encountered_errors = false;
     
@@ -24,9 +24,13 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
     u32 offset               = 0;
     u32 line                 = 1;
     
+    Token** prev = tokens;
+    
     for(;;)
     {
-        Token* token = BucketArray_Append(tokens);
+        Token* token = Arena_PushSize(token_arena, sizeof(Token), ALIGNOF(Token));
+        *prev = token;
+        prev  = &token->next;
         
         for (;;)
         {
@@ -49,10 +53,10 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
             else break;
         }
         
-        token->line                 = line;
-        token->offset_to_line_start = offset_to_line_start;
-        token->offset               = offset;
-        token->size                 = 0;
+        token->text.pos.line                 = line;
+        token->text.pos.offset_to_line_start = offset_to_line_start;
+        token->text.pos.offset               = offset;
+        token->text.length                   = 0;
         
         if (content[offset] == 0) token->kind = Token_EndOfStream;
         else
@@ -108,7 +112,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                     if (content[offset] == 0)
                     {
                         //// ERROR: missing end of block comment
-                        Lexer_ReportError(error_report, token->line, token->offset_to_line_start, token->offset, 2, CONST_STRING("block comment has no end"));
+                        Lexer_ReportError(error_report, token->text.pos.line, token->text.pos.offset_to_line_start, token->text.pos.offset, 2, CONST_STRING("block comment has no end"));
                         encountered_errors = true;
                     }
                     
@@ -495,7 +499,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                                 else
                                 {
                                     //// ERROR: invalid number of digits in hexadecimal float literal
-                                    Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, offset - token->offset,
+                                    Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, offset - token->text.pos.offset,
                                                       CONST_STRING("invalid number of digits in hexadecimal float literal (only 4 and 8 digit literals are allowed)"));
                                     encountered_errors = true;
                                 }
@@ -526,7 +530,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                                         floating_bits == 0x7FFFFFFFFFFFFFFF)
                                     {
                                         //// ERROR: exponent is too magnificent
-                                        Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, offset - token->offset,
+                                        Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, offset - token->text.pos.offset,
                                                           (exponent < 0 ? CONST_STRING("exponent is too small") : CONST_STRING("exponent is too large")));
                                         encountered_errors = true;
                                     }
@@ -539,7 +543,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                             if (integer_overflow)
                             {
                                 //// ERROR: integer literal is too large
-                                Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, offset - token->offset,
+                                Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, offset - token->text.pos.offset,
                                                   CONST_STRING("integer literal is too large to be represented by any integer type"));
                                 encountered_errors = true;
                             }
@@ -574,7 +578,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                 if (content[offset] == 0)
                 {
                     //// ERROR: unterminated string/character literal
-                    Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, 1,
+                    Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, 1,
                                       (terminator == '"' ? CONST_STRING("unterminated string literal") : CONST_STRING("unterminated character literal")));
                     encountered_errors = true;
                 }
@@ -720,7 +724,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                         else
                         {
                             //// ERROR: character literals must contain exactly one unicode codepoint
-                            Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, offset - token->offset,
+                            Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, offset - token->text.pos.offset,
                                               CONST_STRING("character literals must contain exactly one unicode codepoint"));
                             encountered_errors = true;
                         }
@@ -731,13 +735,13 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
             else
             {
                 //// ERROR: Invalid symbol
-                Lexer_ReportError(error_report, line, offset_to_line_start, token->offset, 1,
+                Lexer_ReportError(error_report, line, offset_to_line_start, token->text.pos.offset, 1,
                                   CONST_STRING("encountered an invalid symbol"));
                 encountered_errors = true;
             }
         }
         
-        token->size = offset - token->offset;
+        token->text.length = offset - token->text.pos.offset;
         
         if (encountered_errors) token->kind = Token_Invalid;
         
@@ -752,25 +756,21 @@ void
 DEBUG_PrintTokens(String string_to_lex)
 {
     Memory_Arena scratch = {0};
-    Bucket_Array(Token) tokens;
+    Token* tokens        = 0;
     
     Error_Report report;
-    if (!LexString(string_to_lex, &scratch, &scratch, &tokens, &report))
+    if (!LexString(string_to_lex, &scratch, &scratch, &report, &tokens))
     {
         printf("(%d:%d) %.*s\n", report.line, report.column, (int)report.message.size, report.message.data);
     }
     
     else
     {
-        for (Bucket_Array_Iterator it = BucketArray_Iterate(&tokens);
-             it.current;
-             BucketArray_AdvanceIterator(&it))
+        for (Token* token = tokens; token != 0; token = token->next)
         {
-            Token token = *(Token*)it.current;
-            
             char* token_name = 0;
             
-            switch (token.kind)
+            switch (token->kind)
             {
                 case Token_Invalid:             token_name = "Token_Invalid";             break;
                 case Token_EndOfStream:         token_name = "Token_EndOfStream";         break;
@@ -834,11 +834,14 @@ DEBUG_PrintTokens(String string_to_lex)
                 case Token_Comment:             token_name = "Token_Comment";             break;
             }
             
-            if      (token.kind == Token_Int)   printf("(%.2d:%.2d) %s %llu\n", token.line, token.offset - token.offset_to_line_start, token_name, token.integer);
-            else if (token.kind == Token_Float) printf("(%.2d:%.2d) %s %f\n", token.line, token.offset - token.offset_to_line_start, token_name, token.floating);
-            else                                printf("(%.2d:%.2d) %s\n", token.line, token.offset - token.offset_to_line_start, token_name);
+            if      (token->kind == Token_Int)   printf("(%.2d:%.2d) %s %llu\n", token->text.pos.line, token->text.pos.offset - token->text.pos.offset_to_line_start,
+                                                        token_name, token->integer);
+            else if (token->kind == Token_Float) printf("(%.2d:%.2d) %s %f\n", token->text.pos.line, token->text.pos.offset - token->text.pos.offset_to_line_start,
+                                                        token_name, token->floating);
+            else                                 printf("(%.2d:%.2d) %s\n", token->text.pos.line, token->text.pos.offset - token->text.pos.offset_to_line_start,
+                                                        token_name);
             
-            if (token.kind == Token_Invalid || token.kind == Token_EndOfStream) break;
+            if (token->kind == Token_Invalid || token->kind == Token_EndOfStream) break;
         }
     }
 }

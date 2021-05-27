@@ -44,6 +44,8 @@ Zero(void* ptr, umm size)
     for (umm i = 0; i < size; ++i) *(u8*)ptr = 0;
 }
 
+#define ZeroStruct(S) Zero((S), sizeof(*(S)))
+
 bool
 MemoryCompare(void* a, void* b, umm size)
 {
@@ -84,7 +86,7 @@ Arena_PushSize(Memory_Arena* arena, umm size, u8 alignment)
         
         else
         {
-            umm block_size = MAX(4096 - sizeof(Memory_Block), size);
+            umm block_size = MAX(MAX(4096, arena->default_block_size), size);
             
             void* memory = System_AllocateMemory(block_size);
             
@@ -127,67 +129,5 @@ Arena_FreeAll(Memory_Arena* arena)
         free(block);
         
         block = next;
-    }
-}
-
-void*
-BucketArray_Append(Bucket_Array* array)
-{
-    if (!array->current || array->current_bucket_size == array->bucket_size)
-    {
-        umm memory_size   = sizeof(u64) + array->element_size * array->bucket_size;
-        void* next_bucket = Arena_PushSize(array->arena, memory_size, ALIGNOF(u64));
-        
-        Zero(next_bucket, sizeof(u64));
-        
-        if (array->current) *(void**)array->current = next_bucket;
-        else                         array->first   = next_bucket;
-        
-        array->current = next_bucket;
-    }
-    
-    void* result = (u8*)array->current + sizeof(u64) + array->element_size * array->current_bucket_size;
-    
-    array->current_bucket_size += 1;
-    
-    return result;
-}
-
-umm
-BucketArray_ElementCount(Bucket_Array* array)
-{
-    return MIN(0, array->bucket_count - 1) * array->bucket_size + array->current_bucket_size;
-}
-
-Bucket_Array_Iterator
-BucketArray_Iterate(Bucket_Array* array)
-{
-    Bucket_Array_Iterator it = {
-        .current_bucket   = array->first,
-        .current_index    = 0,
-        .element_size     = array->element_size,
-        .bucket_size      = array->bucket_size,
-        .last_bucket_size = array->current_bucket_size,
-    };
-    
-    it.current = (array->first ? (u8*)array->first + sizeof(u64) : 0);
-    
-    return it;
-}
-
-void
-BucketArray_AdvanceIterator(Bucket_Array_Iterator* it)
-{
-    ASSERT(it->current != 0);
-    
-    it->current_index += 1;
-    umm bucket_offset  = it->current_index % it->bucket_size;
-    
-    if (bucket_offset == 0) it->current_bucket = *(void**)it->current_bucket;
-    
-    it->current = 0;
-    if (it->current_bucket != 0 && (*(void**)it->current_bucket != 0 || bucket_offset < it->last_bucket_size))
-    {
-        it->current = (u8*)it->current_bucket + sizeof(u64) + it->element_size * bucket_offset;
     }
 }

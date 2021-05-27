@@ -75,31 +75,8 @@ typedef struct Memory_Arena
 {
     struct Memory_Block* first;
     struct Memory_Block* current;
+    u32 default_block_size;
 } Memory_Arena;
-
-typedef struct Bucket_Array
-{
-    Memory_Arena* arena;
-    void* first;
-    void* current;
-    u16 element_size;
-    u16 bucket_size;
-    u16 current_bucket_size;
-    u16 bucket_count;
-} Bucket_Array;
-
-#define Bucket_Array(T) Bucket_Array
-#define BUCKET_ARRAY_INIT(A, T, B) (Bucket_Array){.arena = (A), .element_size = sizeof(T), .bucket_size = (B)}
-
-typedef struct Bucket_Array_Iterator
-{
-    void* current_bucket;
-    umm current_index;
-    void* current;
-    u16 element_size;
-    u16 bucket_size;
-    u16 last_bucket_size;
-} Bucket_Array_Iterator;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -120,28 +97,6 @@ typedef struct Error_Report
 } Error_Report;
 
 ///////////////////////////////////////////////////////////////////////////////
-
-typedef struct Token
-{
-    Enum32(TOKEN_KIND) kind;
-    u32 line;
-    u32 offset_to_line_start;
-    u32 offset;
-    u32 size;
-    
-    union
-    {
-        struct
-        {
-            String string;
-            Enum8(KEYWORD_KIND) keyword;
-        };
-        
-        u64 integer;
-        f64 floating;
-        u32 character;
-    };
-} Token;
 
 // META NOTE: This seems somewhat stupidly overcomplicated for a lexer, but I don't see any huge flaws with it
 // NOTE: The enum value for any symbol is it's ASCII value, where multi symbol tokens take the value
@@ -246,8 +201,326 @@ enum KEYWORD_KIND
     KEYWORD_COUNT
 };
 
+typedef struct Text_Pos
+{
+    u32 offset_to_line_start;
+    u32 offset;
+    u32 line;
+} Text_Pos;
+
+typedef struct Text
+{
+    Text_Pos pos;
+    u32 length;
+} Text;
+
+typedef struct Token
+{
+    struct Token* next;
+    
+    Enum32(TOKEN_KIND) kind;
+    Text text;
+    
+    union
+    {
+        struct
+        {
+            String string;
+            Enum8(KEYWORD_KIND) keyword;
+        };
+        
+        u64 integer;
+        f64 floating;
+        u32 character;
+    };
+} Token;
+
 ///////////////////////////////////////////////////////////////////////////////
 
-API_FUNC bool LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, Bucket_Array(Token)* tokens, Error_Report* error_report);
+enum EXPRESSION_KIND
+{
+    Expr_Invalid = 0,
+    
+    // ternary
+    Expr_Conditional,
+    
+    // binary
+    
+    // precedence: 1
+    Expr_Or,
+    //
+    
+    // precedence: 2
+    Expr_And,
+    //
+    
+    // precedence: 3
+    Expr_IsEqual,
+    Expr_IsNotEqual,
+    Expr_IsLess,
+    Expr_IsLessEQ,
+    Expr_IsGreater,
+    Expr_IsGreaterEQ,
+    //
+    
+    // precedence: 4
+    Expr_Add,
+    Expr_Sub,
+    Expr_BitOr,
+    Expr_BitXor,
+    //
+    
+    // precedence: 5
+    Expr_Mul,
+    Expr_Div,
+    Expr_Rem,
+    Expr_BitAnd,
+    Expr_LShift,
+    Expr_RShift,
+    Expr_InfixCall,
+    Expr_Chain,
+    //
+    
+    Expr_Member,
+    
+    // unary
+    Expr_Plus,
+    Expr_Minus,
+    Expr_BitNot,
+    Expr_Not,
+    Expr_Reference,
+    Expr_Dereference,
+    
+    Expr_Call,
+    Expr_Slice,
+    Expr_Subscript,
+    
+    // nesting
+    Expr_Compound,
+    
+    // types
+    Expr_PointerType,
+    Expr_SliceType,
+    Expr_ArrayType,
+    Expr_DynamicArrayType,
+    
+    // primary
+    Expr_StructLiteral,
+    Expr_ArrayLiteral,
+    Expr_Proc,
+    Expr_Struct,
+    Expr_Enum,
+    Expr_Identifier,
+    Expr_String,
+    Expr_Int,
+    Expr_Float,
+    Expr_Boolean,
+};
+
+typedef struct Named_Argument
+{
+    struct Named_Argument* next;
+    struct Expression* name;
+    struct Expression* value;
+} Named_Argument;
+
+typedef struct Expression
+{
+    struct Expression* parent;
+    struct Expression* prev;
+    struct Expression* next;
+    
+    Enum8(EXPRESSION_KIND) kind;
+    Text text;
+    
+    union
+    {
+        struct
+        {
+            struct Expression* condition;
+            struct Expression* true_expr;
+            struct Expression* false_expr;
+        } conditional;
+        
+        struct
+        {
+            struct Expression* left;
+            struct Expression* right;
+        };
+        
+        struct Expression* operand;
+        
+        struct
+        {
+            struct Expression* pointer;
+            Named_Argument arguments;
+        } call;
+        
+        struct
+        {
+            struct Expression* pointer;
+            struct Expression* start_index;
+            struct Expression* stop_index;
+        } slice;
+        
+        struct
+        {
+            struct Expression* pointer;
+            struct Expression* index;
+        } subscript;
+        
+        struct Expression* compound_expression;
+        
+        struct
+        {
+            struct Expression* size;
+            struct Expression* elem_type;
+        } array_type;
+        
+        struct
+        {
+            struct Expression* type;
+            Named_Argument arguments;
+        } struct_literal, array_literal;
+        
+        struct
+        {
+        } proc;
+        
+        struct
+        {
+        } structure;
+        
+        struct
+        {
+        } enumeration;
+        
+        String identifier;
+        String string;
+        u64 integer;
+        f64 floating;
+        bool boolean;
+    };
+} Expression;
+
+enum AST_NODE_KIND
+{
+    AST_Invalid = 0,
+    
+    AST_Block,
+    AST_Expression,
+    
+    AST_VarDecl,
+    AST_ConstDecl,
+    AST_ImportDecl,
+    AST_IncludeDecl,
+    
+    AST_If,
+    AST_When,
+    AST_While,
+    AST_Break,
+    AST_Continue,
+    AST_Using,
+    AST_Defer,
+    AST_Return,
+    AST_Assignment,
+};
+
+typedef struct AST_Node
+{
+    struct AST_Node* parent;
+    struct AST_Node* prev;
+    struct AST_Node* next;
+    
+    Enum8(AST_NODE_KIND) kind;
+    Text text;
+    
+    union
+    {
+        struct
+        {
+            struct AST_Node* first_child;
+            struct AST_Node* last_child;
+        } block;
+        
+        Expression* expression;
+        
+        struct
+        {
+            Expression* names;
+            Expression* type;
+            Expression* values;
+            bool is_using;
+            bool is_uninitialized;
+        } variable;
+        
+        struct
+        {
+            Expression* names;
+            Expression* type;
+            Expression* values;
+            bool is_using;
+        } constant;
+        
+        struct
+        {
+            String import_path;
+            String alias;
+            bool is_foreign;
+        } import;
+        
+        struct
+        {
+            String include_path;
+        } include;
+        
+        struct
+        {
+            struct AST_Node* init;
+            Expression* condition;
+            struct AST_Node* true_statement;
+            struct AST_Node* false_statement;
+        } if_statement, when_statement;
+        
+        struct
+        {
+            struct AST_Node* init;
+            Expression* condition;
+            struct AST_Node* body;
+        } while_statement;
+        
+        struct
+        {
+            Expression* label;
+        } break_statement, continue_statement;
+        
+        struct
+        {
+            Expression* symbol;
+        } using_statement;
+        
+        struct
+        {
+            struct AST_Node* statement;
+        } defer_statement;
+        
+        struct
+        {
+            Named_Argument arguments;
+        } return_statement;
+        
+        struct
+        {
+            Expression* lhs;
+            Expression* rhs;
+            Enum8(EXPRESSION_KIND) op;
+        } assignment_statement;
+    };
+} AST_Node;
+
+///////////////////////////////////////////////////////////////////////////////
+
+API_FUNC bool LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, Error_Report* error_report, Token** tokens);
+API_FUNC bool ParseTokens(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, AST_Node** ast);
 
 #endif
