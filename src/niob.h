@@ -326,7 +326,6 @@ typedef struct Named_Argument
 
 typedef struct Expression
 {
-    struct Expression* parent;
     struct Expression* prev;
     struct Expression* next;
     
@@ -360,7 +359,7 @@ typedef struct Expression
         {
             struct Expression* pointer;
             struct Expression* start_index;
-            struct Expression* stop_index;
+            struct Expression* end_index;
         } slice;
         
         struct
@@ -428,7 +427,6 @@ enum AST_NODE_KIND
 
 typedef struct AST_Node
 {
-    struct AST_Node* parent;
     struct AST_Node* prev;
     struct AST_Node* next;
     

@@ -69,18 +69,7 @@ TextSincePos(Parser_State state, Text_Pos pos)
     return (Text){.pos = pos, .length = state.offset_to_end_of_last_token - pos.offset};
 }
 
-Text
-ContainingText(Text t0, Text t1)
-{
-    ASSERT(t0.pos.offset_to_line_start <= t1.pos.offset_to_line_start && t0.pos.offset <= t1.pos.offset && t0.pos.line <= t1.pos.line);
-    
-    Text result = {
-        .pos    = t0.pos,
-        .length = (t1.pos.offset - t0.pos.offset) + t1.length
-    };
-    
-    return result;
-}
+bool ParseExpression(Parser_State state, Expression** expression);
 
 bool
 ParseType(Parser_State state, Expression** expression)
@@ -103,21 +92,11 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
 }
 
 bool
-ParseMemberExpression(Parser_State state, Expression** expression)
-{
-    bool encountered_errors = false;
-    
-    NOT_IMPLEMENTED;
-    
-    return !encountered_errors;
-}
-
-bool
 ParsePostfixExpression(Parser_State state, Expression** expression)
 {
     bool encountered_errors = false;
     
-    if (!ParseMemberExpression(state, expression)) encountered_errors = true;
+    if (!ParsePrimaryExpression(state, expression)) encountered_errors = true;
     else
     {
         while (!encountered_errors)
@@ -145,13 +124,6 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
                             encountered_errors = true;
                             break;
                         }
-                        
-                        else
-                        {
-                            (*expression)->slice.pointer->parent     = *expression;
-                            (*expression)->slice.start_index->parent = *expression;
-                            (*expression)->slice.end_index->parent   = *expression;
-                        }
                     }
                     
                     else
@@ -159,9 +131,6 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
                         *expression = PushExpression(state, Expr_Subscript);
                         (*expression)->subscript.pointer = pointer;
                         (*expression)->subscript.index   = index;
-                        
-                        (*expression)->subscript.pointer->parent = *expression;
-                        (*expression)->subscript.index->parent   = *expression;
                     }
                     
                     if (!IsCurrentToken(state, Token_CloseBracket))
@@ -173,7 +142,7 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
                     else
                     {
                         SkipPastToken(state, SKIP_CURRENT);
-                        (*expression)->text = TextSincePos(state, (*expression)->slice.pointer.text.pos);
+                        (*expression)->text = TextSincePos(state, (*expression)->slice.pointer->text.pos);
                     }
                 }
             }
@@ -182,7 +151,73 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
             {
                 SkipPastToken(state, SKIP_CURRENT);
                 
-                NOT_IMPLEMENTED;
+                Expression* pointer = *expression;
+                
+                *expression = PushExpression(state, Expr_Call);
+                (*expression)->call.pointer = pointer;
+                
+                Named_Argument* last_argument = 0;
+                while (!encountered_errors)
+                {
+                    Named_Argument* argument = 0;
+                    
+                    if (last_argument == 0)
+                    {
+                        argument      = &(*expression)->call.arguments;
+                        last_argument = argument;
+                    }
+                    
+                    else
+                    {
+                        argument = Arena_PushSize(state.ast_arena, sizeof(Named_Argument), ALIGNOF(Named_Argument));
+                        ZeroStruct(argument);
+                        
+                        last_argument->next = argument;
+                        last_argument       = argument;
+                    }
+                    
+                    if (!ParseExpression(state, &argument->value)) encountered_errors = true;
+                    else
+                    {
+                        if (IsCurrentToken(state, Token_Equal))
+                        {
+                            SkipPastToken(state, SKIP_CURRENT);
+                            
+                            argument->name = argument->value;
+                            if (!ParseExpression(state, &argument->value)) encountered_errors = true;
+                        }
+                        
+                        if (!encountered_errors)
+                        {
+                            if (IsCurrentToken(state, Token_Comma)) SkipPastToken(state, SKIP_CURRENT);
+                            else break;
+                        }
+                    }
+                }
+                
+                if (!IsCurrentToken(state, Token_CloseParen))
+                {
+                    //// ERROR: Missing closing parenthesis
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipPastToken(state, SKIP_CURRENT);
+                    
+                    (*expression)->text = TextSincePos(state, (*expression)->call.pointer->text.pos);
+                }
+            }
+            
+            else if (IsCurrentToken(state, Token_Period))
+            {
+                Expression* left = *expression;
+                
+                *expression = PushExpression(state, Expr_Member);
+                (*expression)->left = left;
+                
+                if (!ParsePrimaryExpression(state, &(*expression)->right)) encountered_errors = true;
+                else (*expression)->text = TextSincePos(state, left->text.pos);
             }
             
             else break;
@@ -219,8 +254,7 @@ ParsePrefixExpression(Parser_State state, Expression** expression)
         if (!ParsePrefixExpression(state, &(*expression)->operand)) encountered_errors = true;
         else
         {
-            (*expression)->operand->parent = *expression;
-            (*expression)->text            = TextSincePos(state, start_text_pos);
+            (*expression)->text = TextSincePos(state, start_text_pos);
         }
     }
     
@@ -265,7 +299,8 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
                 case Token_Arrow:          kind = Expr_Chain;       precedence = 5; break;
             }
             
-            if (kind != Expr_Invalid)
+            if (kind == Expr_Invalid) break;
+            else
             {
                 SkipPastToken(state, SKIP_CURRENT);
                 
@@ -273,7 +308,8 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
                 if (!ParsePrefixExpression(state, &right)) encountered_errors = true;
                 else
                 {
-                    Expression** scan = expression;
+                    Expression** scan  = expression;
+                    Expression* parent = 0;
                     
                     for (;;)
                     {
@@ -288,22 +324,20 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
                         if (scan_precedence >= precedence)
                         {
                             Expression* new_expression = PushExpression(state, kind);
-                            new_expression->parent = (*scan)->parent;
                             new_expression->text   = TextSincePos(state, (*scan)->text.pos);
                             new_expression->left   = *scan;
                             new_expression->right  = right;
                             
-                            *scan                          = new_expression;
-                            new_expression->left->parent   = new_expression;
-                            new_expression->right->parent  = new_expression;
+                            *scan = new_expression;
                             
-                            new_expression->parent->text = ContainingText(new_expression->parent->text, new_expression->text);
+                            if (parent != 0) parent->text = TextSincePos(state, parent->text.pos);
                             break;
                         }
                         
                         else
                         {
-                            scan = &(*scan)->right;
+                            parent = *scan;
+                            scan   = &(*scan)->right;
                             continue;
                         }
                     }
@@ -352,10 +386,6 @@ ParseExpression(Parser_State state, Expression** expression)
                         (*expression)->conditional.condition  = condition;
                         (*expression)->conditional.true_expr  = true_expr;
                         (*expression)->conditional.false_expr = false_expr;
-                        
-                        (*expression)->conditional.condition->parent  = *expression;
-                        (*expression)->conditional.true_expr->parent  = *expression;
-                        (*expression)->conditional.false_expr->parent = *expression;
                     }
                 }
             }
