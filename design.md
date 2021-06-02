@@ -21,7 +21,7 @@ Why I won't use Odin instead (I done AoC, written a 6502 emulator, some board ga
 	(since it has no, or at least few, implicit casts I find myself having to litter "meaningless" casts everywhere, since I cannot communicate the guarantees I have about values, e.g. x is
      an u8, y is an i8, x is always greater than 0 and less than 255, y is between -1 and 1, x + y does not work, since u8 + i8 is not legal, so I have to do u8(i8(x) + y), eventhough I
      have asserted that the guarantees hold. Another example of this is how u64 % 8 is always a u64 and cannot be implicitly casted to an u8, eventhough it is impossible for the value
-     to be greater than 7)
+     to be greater than 254)
  - I hate the new code style errors, since I have much more trouble reading code that is formated in that way (whitespace is immensely important for grouping and distinction)
  - there are also other reasons, but it all boils down to Odin being essentially what I want in a language, but with a whole lot of tedium added
 
@@ -184,9 +184,8 @@ defer {}
 Expressions:
 
 operators (all binary operators are left-associative):
-8.  .,
-7.  slice[:], subscript[], call()
-6.  +, -, &, *, ~, !
+7.  slice[:], subscript[], call(), .
+6.  +, -, &, *, ~, !, ., ^, [], [N], [..]
 5.  *, /, %, &, >>, <<, infix call, ->
 4.  +, -, |, ^
 3.  ==, !=, <=, >=, <, >
@@ -236,3 +235,5 @@ u8-64 implicitly casts to uint
 u8-32 implicitly casts to int
 i8-64 implicitly casts to int
 b8-64 do not implicitly cast to bool
+
+struct and array literals vs. blocks and subscripts

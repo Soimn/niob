@@ -112,6 +112,7 @@ enum TOKEN_KIND
     Token_Plus            = '+',
     Token_PlusEqual       = '+' + 2*'=',
     Token_Minus           = '-',
+    Token_MinusMinusMinus = '-' + 2*'-' + 2*'-',
     Token_MinusEqual      = '-' + 2*'=',
     Token_Arrow           = '-' + 3*'>',
     Token_Star            = '*',
@@ -187,6 +188,7 @@ enum KEYWORD_KIND
     Keyword_Union,
     Keyword_Enum,
     Keyword_If,
+    Keyword_When,
     Keyword_Else,
     Keyword_While,
     Keyword_Break,
@@ -197,6 +199,8 @@ enum KEYWORD_KIND
     Keyword_True,
     Keyword_False,
     Keyword_Do,
+    Keyword_Import,
+    Keyword_Include,
     
     KEYWORD_COUNT
 };
@@ -312,6 +316,7 @@ enum EXPRESSION_KIND
     Expr_Enum,
     Expr_Identifier,
     Expr_String,
+    Expr_Char,
     Expr_Int,
     Expr_Float,
     Expr_Boolean,
@@ -382,63 +387,55 @@ typedef struct Expression
             Named_Argument arguments;
         } struct_literal, array_literal;
         
-        struct
-        {
-        } proc;
-        
-        struct
-        {
-        } structure;
-        
-        struct
-        {
-        } enumeration;
+        // TODO: procs, structs, unions, enums
         
         String identifier;
         String string;
+        u32 character;
         u64 integer;
         f64 floating;
         bool boolean;
     };
 } Expression;
 
-enum AST_NODE_KIND
+enum STATEMENT_KIND
 {
-    AST_Invalid = 0,
+    Statement_Invalid = 0,
     
-    AST_Block,
-    AST_Expression,
+    Statement_Block,
+    Statement_Expression,
     
-    AST_VarDecl,
-    AST_ConstDecl,
-    AST_ImportDecl,
-    AST_IncludeDecl,
+    Statement_VarDecl,
+    Statement_ConstDecl,
+    Statement_ImportDecl,
+    Statement_IncludeDecl,
     
-    AST_If,
-    AST_When,
-    AST_While,
-    AST_Break,
-    AST_Continue,
-    AST_Using,
-    AST_Defer,
-    AST_Return,
-    AST_Assignment,
+    Statement_If,
+    Statement_When,
+    Statement_While,
+    Statement_Break,
+    Statement_Continue,
+    Statement_Using,
+    Statement_Defer,
+    Statement_Return,
+    Statement_Assignment,
 };
 
-typedef struct AST_Node
+typedef struct Statement
 {
-    struct AST_Node* prev;
-    struct AST_Node* next;
+    struct Statement* prev;
+    struct Statement* next;
     
-    Enum8(AST_NODE_KIND) kind;
+    Enum8(STATEMENT_KIND) kind;
     Text text;
     
     union
     {
         struct
         {
-            struct AST_Node* first_child;
-            struct AST_Node* last_child;
+            Expression* label;
+            struct Statement* first_child;
+            struct Statement* last_child;
         } block;
         
         Expression* expression;
@@ -450,7 +447,7 @@ typedef struct AST_Node
             Expression* values;
             bool is_using;
             bool is_uninitialized;
-        } variable;
+        } variable_decl;
         
         struct
         {
@@ -458,33 +455,35 @@ typedef struct AST_Node
             Expression* type;
             Expression* values;
             bool is_using;
-        } constant;
+        } constant_decl;
         
         struct
         {
             String import_path;
             String alias;
             bool is_foreign;
-        } import;
+        } import_decl;
         
         struct
         {
             String include_path;
-        } include;
+        } include_decl;
         
         struct
         {
-            struct AST_Node* init;
+            Expression* label;
+            struct Statement* init;
             Expression* condition;
-            struct AST_Node* true_statement;
-            struct AST_Node* false_statement;
+            struct Statement* true_statement;
+            struct Statement* false_statement;
         } if_statement, when_statement;
         
         struct
         {
-            struct AST_Node* init;
+            Expression* label;
+            struct Statement* init;
             Expression* condition;
-            struct AST_Node* body;
+            struct Statement* body;
         } while_statement;
         
         struct
@@ -499,7 +498,7 @@ typedef struct AST_Node
         
         struct
         {
-            struct AST_Node* statement;
+            struct Statement* statement;
         } defer_statement;
         
         struct
@@ -514,11 +513,11 @@ typedef struct AST_Node
             Enum8(EXPRESSION_KIND) op;
         } assignment_statement;
     };
-} AST_Node;
+} Statement;
 
 ///////////////////////////////////////////////////////////////////////////////
 
 API_FUNC bool LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, Error_Report* error_report, Token** tokens);
-API_FUNC bool ParseTokens(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, AST_Node** ast);
+API_FUNC bool ParseTokens(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, Statement** ast);
 
 #endif

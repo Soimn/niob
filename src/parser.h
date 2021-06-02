@@ -7,14 +7,8 @@ typedef struct Parser_State
     Token* current_token;
 } Parser_State;
 
-enum SKIP_MODE
-{
-    SKIP_CURRENT,
-    SKIP_PEEK,
-};
-
 void
-SkipPastToken(Parser_State state, Enum8(SKIP_MODE) skip_mode)
+SkipCurrentToken(Parser_State state)
 {
     ASSERT(state.current_token->next != 0);
     
@@ -26,12 +20,6 @@ Enum32(TOKEN_KIND)
 CurrentTokenKind(Parser_State state)
 {
     return state.current_token->kind;
-}
-
-Enum32(TOKEN_KIND)
-PeekTokenKind(Parser_State state)
-{
-    return state.current_token->next->kind;
 }
 
 bool
@@ -46,15 +34,16 @@ IsPeekToken(Parser_State state, Enum32(TOKEN_KIND) kind)
     return (state.current_token->next->kind == kind);
 }
 
-Expression*
-PushExpression(Parser_State state, Enum8(EXPRESSION_KIND) kind)
+Token
+CurrentToken(Parser_State state)
 {
-    Expression* result = Arena_PushSize(state.ast_arena, sizeof(Expression), ALIGNOF(Expression));
-    ZeroStruct(result);
-    
-    result->kind = kind;
-    
-    return result;
+    return *state.current_token;
+}
+
+Token
+PeekToken(Parser_State state)
+{
+    return *state.current_token;
 }
 
 Text_Pos
@@ -69,14 +58,73 @@ TextSincePos(Parser_State state, Text_Pos pos)
     return (Text){.pos = pos, .length = state.offset_to_end_of_last_token - pos.offset};
 }
 
+Expression*
+PushExpression(Parser_State state, Enum8(EXPRESSION_KIND) kind)
+{
+    Expression* result = Arena_PushSize(state.ast_arena, sizeof(Expression), ALIGNOF(Expression));
+    ZeroStruct(result);
+    
+    result->kind = kind;
+    
+    return result;
+}
+
+Statement*
+PushStatement(Parser_State state, Enum8(STATEMENT_KIND) kind)
+{
+    Statement* result = Arena_PushSize(state.ast_arena, sizeof(Statement), ALIGNOF(Statement));
+    ZeroStruct(result);
+    
+    result->kind = kind;
+    
+    return result;
+}
+
 bool ParseExpression(Parser_State state, Expression** expression);
 
 bool
-ParseType(Parser_State state, Expression** expression)
+ParseNamedArgumentList(Parser_State state, Named_Argument* arguments)
 {
     bool encountered_errors = false;
     
-    NOT_IMPLEMENTED;
+    Named_Argument* last_argument = 0;
+    while (!encountered_errors)
+    {
+        Named_Argument* argument = 0;
+        
+        if (last_argument == 0)
+        {
+            argument      = arguments;
+            last_argument = argument;
+        }
+        
+        else
+        {
+            argument = Arena_PushSize(state.ast_arena, sizeof(Named_Argument), ALIGNOF(Named_Argument));
+            ZeroStruct(argument);
+            
+            last_argument->next = argument;
+            last_argument       = argument;
+        }
+        
+        if (!ParseExpression(state, &argument->value)) encountered_errors = true;
+        else
+        {
+            if (IsCurrentToken(state, Token_Equal))
+            {
+                SkipCurrentToken(state);
+                
+                argument->name = argument->value;
+                if (!ParseExpression(state, &argument->value)) encountered_errors = true;
+            }
+            
+            if (!encountered_errors)
+            {
+                if (IsCurrentToken(state, Token_Comma)) SkipCurrentToken(state);
+                else break;
+            }
+        }
+    }
     
     return !encountered_errors;
 }
@@ -86,7 +134,116 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
 {
     bool encountered_errors = false;
     
-    NOT_IMPLEMENTED;
+    Text_Pos start_text_pos = CurrentTextPos(state);
+    
+    if (IsCurrentToken(state, Token_OpenParen))
+    {
+        SkipCurrentToken(state);
+        
+        *expression = PushExpression(state, Expr_Compound);
+        
+        if (!ParseExpression(state, &(*expression)->compound_expression)) encountered_errors = true;
+        else
+        {
+            if (!IsCurrentToken(state, Token_CloseParen))
+            {
+                //// ERROR: Missing matching closing paren
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                SkipCurrentToken(state);
+                
+                (*expression)->text = TextSincePos(state, start_text_pos);
+            }
+        }
+    }
+    
+    else if (IsCurrentToken(state, Token_String))
+    {
+        Token token = CurrentToken(state);
+        
+        *expression = PushExpression(state, Expr_String);
+        (*expression)->string = token.string;
+        (*expression)->text   = token.text;
+        
+        SkipCurrentToken(state);
+    }
+    
+    else if (IsCurrentToken(state, Token_Character))
+    {
+        Token token = CurrentToken(state);
+        
+        *expression = PushExpression(state, Expr_Char);
+        (*expression)->character = token.character;
+        (*expression)->text      = token.text;
+        
+        SkipCurrentToken(state);
+    }
+    
+    else if (IsCurrentToken(state, Token_Int) ||
+             IsCurrentToken(state, Token_Float))
+    {
+        // TODO: precision handling and evaluating wether it can be represented as an int
+        NOT_IMPLEMENTED;
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier))
+    {
+        Token token = CurrentToken(state);
+        
+        if (token.keyword == Keyword_Proc)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else if (token.keyword == Keyword_Struct)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else if (token.keyword == Keyword_Union)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else if (token.keyword == Keyword_Enum)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else if (token.keyword == Keyword_True ||
+                 token.keyword == Keyword_False)
+        {
+            *expression = PushExpression(state, Expr_Boolean);
+            (*expression)->boolean = (token.keyword == Keyword_True);
+            (*expression)->text    = token.text;
+            
+            SkipCurrentToken(state);
+        }
+        
+        else if (token.keyword == Keyword_Invalid)
+        {
+            *expression = PushExpression(state, Expr_Identifier);
+            (*expression)->identifier = token.string;
+            (*expression)->text       = token.text;
+            
+            SkipCurrentToken(state);
+        }
+        
+        else
+        {
+            //// ERROR: Illegal use of keyword in expression
+            encountered_errors = true;
+        }
+    }
+    
+    else
+    {
+        //// ERROR: Missing primary expression
+        encountered_errors = true;
+    }
     
     return !encountered_errors;
 }
@@ -103,7 +260,7 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
         {
             if (IsCurrentToken(state, Token_OpenBracket))
             {
-                SkipPastToken(state, SKIP_CURRENT);
+                SkipCurrentToken(state);
                 
                 Expression* pointer = *expression;
                 Expression* index   = 0;
@@ -113,7 +270,7 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
                 {
                     if (IsCurrentToken(state, Token_Colon))
                     {
-                        SkipPastToken(state, SKIP_CURRENT);
+                        SkipCurrentToken(state);
                         
                         *expression = PushExpression(state, Expr_Slice);
                         (*expression)->slice.pointer     = pointer;
@@ -141,7 +298,7 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
                     
                     else
                     {
-                        SkipPastToken(state, SKIP_CURRENT);
+                        SkipCurrentToken(state);
                         (*expression)->text = TextSincePos(state, (*expression)->slice.pointer->text.pos);
                     }
                 }
@@ -149,75 +306,92 @@ ParsePostfixExpression(Parser_State state, Expression** expression)
             
             else if (IsCurrentToken(state, Token_OpenParen))
             {
-                SkipPastToken(state, SKIP_CURRENT);
+                SkipCurrentToken(state);
                 
                 Expression* pointer = *expression;
                 
                 *expression = PushExpression(state, Expr_Call);
                 (*expression)->call.pointer = pointer;
                 
-                Named_Argument* last_argument = 0;
-                while (!encountered_errors)
-                {
-                    Named_Argument* argument = 0;
-                    
-                    if (last_argument == 0)
-                    {
-                        argument      = &(*expression)->call.arguments;
-                        last_argument = argument;
-                    }
-                    
-                    else
-                    {
-                        argument = Arena_PushSize(state.ast_arena, sizeof(Named_Argument), ALIGNOF(Named_Argument));
-                        ZeroStruct(argument);
-                        
-                        last_argument->next = argument;
-                        last_argument       = argument;
-                    }
-                    
-                    if (!ParseExpression(state, &argument->value)) encountered_errors = true;
-                    else
-                    {
-                        if (IsCurrentToken(state, Token_Equal))
-                        {
-                            SkipPastToken(state, SKIP_CURRENT);
-                            
-                            argument->name = argument->value;
-                            if (!ParseExpression(state, &argument->value)) encountered_errors = true;
-                        }
-                        
-                        if (!encountered_errors)
-                        {
-                            if (IsCurrentToken(state, Token_Comma)) SkipPastToken(state, SKIP_CURRENT);
-                            else break;
-                        }
-                    }
-                }
-                
-                if (!IsCurrentToken(state, Token_CloseParen))
-                {
-                    //// ERROR: Missing closing parenthesis
-                    encountered_errors = true;
-                }
-                
+                if (!ParseNamedArgumentList(state, &(*expression)->call.arguments)) encountered_errors = true;
                 else
                 {
-                    SkipPastToken(state, SKIP_CURRENT);
+                    if (!IsCurrentToken(state, Token_CloseParen))
+                    {
+                        //// ERROR: Missing closing parenthesis
+                        encountered_errors = true;
+                    }
                     
-                    (*expression)->text = TextSincePos(state, (*expression)->call.pointer->text.pos);
+                    else
+                    {
+                        SkipCurrentToken(state);
+                        
+                        (*expression)->text = TextSincePos(state, (*expression)->call.pointer->text.pos);
+                    }
                 }
             }
             
             else if (IsCurrentToken(state, Token_Period))
             {
-                Expression* left = *expression;
+                if (IsCurrentToken(state, Token_OpenBrace) ||
+                    IsCurrentToken(state, Token_OpenBracket))
+                {
+                    Enum32(TOKEN_KIND) token = CurrentTokenKind(state);
+                    SkipCurrentToken(state);
+                    
+                    Expression* type          = *expression;
+                    Named_Argument* arguments = 0;
+                    
+                    if (token == Token_OpenBrace)
+                    {
+                        *expression = PushExpression(state, Expr_StructLiteral);
+                        (*expression)->struct_literal.type = type;
+                        
+                        arguments = &(*expression)->struct_literal.arguments;
+                    }
+                    
+                    else
+                    {
+                        *expression = PushExpression(state, Expr_ArrayLiteral);
+                        (*expression)->array_literal.type = type;
+                        
+                        arguments = &(*expression)->array_literal.arguments;
+                    }
+                    
+                    if (!ParseNamedArgumentList(state, arguments)) encountered_errors = true;
+                    else
+                    {
+                        if (token == Token_OpenBrace && !IsCurrentToken(state, Token_CloseBrace))
+                        {
+                            //// ERROR: Missing matching closing brace after struct literal
+                            encountered_errors = true;
+                        }
+                        
+                        else if (!IsCurrentToken(state, Token_CloseBracket))
+                        {
+                            //// ERROR: Missing matching closing bracket after array literal
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            SkipCurrentToken(state);
+                            
+                            (*expression)->text = TextSincePos(state, type->text.pos);
+                        }
+                    }
+                }
                 
-                *expression = PushExpression(state, Expr_Member);
-                (*expression)->left = left;
-                
-                if (!ParsePrimaryExpression(state, &(*expression)->right)) encountered_errors = true;
-                else (*expression)->text = TextSincePos(state, left->text.pos);
+                else
+                {
+                    Expression* left = *expression;
+                    
+                    *expression = PushExpression(state, Expr_Member);
+                    (*expression)->left = left;
+                    
+                    if (!ParsePrimaryExpression(state, &(*expression)->right)) encountered_errors = true;
+                    else (*expression)->text = TextSincePos(state, left->text.pos);
+                }
             }
             
             else break;
@@ -234,27 +408,155 @@ ParsePrefixExpression(Parser_State state, Expression** expression)
     
     Text_Pos start_text_pos = CurrentTextPos(state);
     
-    Enum8(EXPRESSION_KIND) kind = Expr_Invalid;
-    
-    switch (CurrentTokenKind(state))
+    if (IsCurrentToken(state, Token_Period))
     {
-        case Token_Plus:   kind = Expr_Plus;        break;
-        case Token_Minus:  kind = Expr_Minus;       break;
-        case Token_BitAnd: kind = Expr_Reference;   break;
-        case Token_Star:   kind = Expr_Dereference; break;
-        case Token_BitNot: kind = Expr_BitNot;      break;
-        case Token_Not:    kind = Expr_Not;         break;
-    }
-    
-    if (kind == Expr_Invalid) encountered_errors = !ParsePostfixExpression(state, expression);
-    else
-    {
-        *expression = PushExpression(state, kind);
+        SkipCurrentToken(state);
         
-        if (!ParsePrefixExpression(state, &(*expression)->operand)) encountered_errors = true;
+        if (IsCurrentToken(state, Token_OpenBrace) ||
+            IsCurrentToken(state, Token_OpenBracket))
+        {
+            Enum32(TOKEN_KIND) token = CurrentTokenKind(state);
+            SkipCurrentToken(state);
+            
+            Named_Argument* arguments = 0;
+            
+            if (token == Token_OpenBrace)
+            {
+                *expression = PushExpression(state, Expr_StructLiteral);
+                (*expression)->struct_literal.type = 0;
+                
+                arguments = &(*expression)->struct_literal.arguments;
+            }
+            
+            else
+            {
+                *expression = PushExpression(state, Expr_ArrayLiteral);
+                (*expression)->array_literal.type = 0;
+                
+                arguments = &(*expression)->array_literal.arguments;
+            }
+            
+            if (!ParseNamedArgumentList(state, arguments)) encountered_errors = true;
+            else
+            {
+                if (token == Token_OpenBrace && !IsCurrentToken(state, Token_CloseBrace))
+                {
+                    //// ERROR: Missing matching closing brace after struct literal
+                    encountered_errors = true;
+                }
+                
+                else if (!IsCurrentToken(state, Token_CloseBracket))
+                {
+                    //// ERROR: Missing matching closing bracket after array literal
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipCurrentToken(state);
+                    
+                    (*expression)->text = TextSincePos(state, start_text_pos);
+                }
+            }
+        }
+        
         else
         {
-            (*expression)->text = TextSincePos(state, start_text_pos);
+            *expression = PushExpression(state, Expr_Member);
+            (*expression)->left = 0;
+            
+            if (!ParsePrimaryExpression(state, &(*expression)->right)) encountered_errors = true;
+            else
+            {
+                (*expression)->text = TextSincePos(state, start_text_pos);
+            }
+        }
+    }
+    
+    else if (CurrentTokenKind(state) == Token_OpenBracket)
+    {
+        SkipCurrentToken(state);
+        
+        Expression** operand = 0;
+        if (CurrentTokenKind(state) == Token_CloseBracket)
+        {
+            SkipCurrentToken(state);
+            
+            *expression = PushExpression(state, Expr_SliceType);
+            
+            operand = &(*expression)->operand;
+        }
+        
+        else
+        {
+            if (CurrentTokenKind(state) == Token_PeriodPeriod)
+            {
+                SkipCurrentToken(state);
+                
+                *expression = PushExpression(state, Expr_DynamicArrayType);
+                
+                operand = &(*expression)->operand;
+            }
+            
+            else
+            {
+                *expression = PushExpression(state, Expr_ArrayType);
+                
+                if (!ParseExpression(state, &(*expression)->array_type.size)) encountered_errors = true;
+                else
+                {
+                    operand = &(*expression)->array_type.elem_type;
+                }
+            }
+            
+            if (!encountered_errors)
+            {
+                if (CurrentTokenKind(state) == Token_CloseBracket) SkipCurrentToken(state);
+                else
+                {
+                    //// ERROR: Missing closing bracket
+                    encountered_errors = true;
+                }
+            }
+        }
+        
+        if (!encountered_errors)
+        {
+            if (!ParsePrefixExpression(state, operand)) encountered_errors = true;
+            else
+            {
+                (*expression)->text = TextSincePos(state, start_text_pos);
+            }
+        }
+    }
+    
+    else
+    {
+        Enum8(EXPRESSION_KIND) kind = Expr_Invalid;
+        
+        switch (CurrentTokenKind(state))
+        {
+            case Token_Plus:   kind = Expr_Plus;        break;
+            case Token_Minus:  kind = Expr_Minus;       break;
+            case Token_BitAnd: kind = Expr_Reference;   break;
+            case Token_Star:   kind = Expr_Dereference; break;
+            case Token_BitNot: kind = Expr_BitNot;      break;
+            case Token_Not:    kind = Expr_Not;         break;
+            case Token_Hat:    kind = Expr_PointerType; break;
+        }
+        
+        if (kind == Expr_Invalid) encountered_errors = !ParsePostfixExpression(state, expression);
+        else
+        {
+            SkipCurrentToken(state);
+            
+            *expression = PushExpression(state, kind);
+            
+            if (!ParsePrefixExpression(state, &(*expression)->operand)) encountered_errors = true;
+            else
+            {
+                (*expression)->text = TextSincePos(state, start_text_pos);
+            }
         }
     }
     
@@ -302,7 +604,7 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
             if (kind == Expr_Invalid) break;
             else
             {
-                SkipPastToken(state, SKIP_CURRENT);
+                SkipCurrentToken(state);
                 
                 Expression* right;
                 if (!ParsePrefixExpression(state, &right)) encountered_errors = true;
@@ -359,7 +661,7 @@ ParseExpression(Parser_State state, Expression** expression)
     {
         if (IsCurrentToken(state, Token_Question))
         {
-            SkipPastToken(state, SKIP_CURRENT);
+            SkipCurrentToken(state);
             
             Expression* condition  = *expression;
             Expression* true_expr  = 0;
@@ -376,7 +678,7 @@ ParseExpression(Parser_State state, Expression** expression)
                 
                 else
                 {
-                    SkipPastToken(state, SKIP_CURRENT);
+                    SkipCurrentToken(state);
                     
                     if (!ParseExpression(state, &false_expr)) encountered_errors = true;
                     else
@@ -395,8 +697,412 @@ ParseExpression(Parser_State state, Expression** expression)
     return !encountered_errors;
 }
 
+bool
+ParseStatement(Parser_State state, Statement** statement)
+{
+    bool encountered_errors = false;
+    
+    Text_Pos start_of_statement = CurrentTextPos(state);
+    
+    if (IsCurrentToken(state, Token_EndOfStream))
+    {
+        //// ERROR: Encountered end of stream
+        encountered_errors = true;
+    }
+    
+    else if (IsCurrentToken(state, Token_EndOfStream))
+    {
+        //// ERROR: Stray semicolon
+        encountered_errors = true;
+    }
+    
+    else if (IsCurrentToken(state, Token_OpenBrace))
+    {
+        NOT_IMPLEMENTED;
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_If ||
+                                                         CurrentToken(state).keyword == Keyword_When))
+    {
+        bool is_if = (CurrentToken(state).keyword == Keyword_If);
+        
+        SkipCurrentToken(state);
+        
+        NOT_IMPLEMENTED;
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Else)
+    {
+        //// ERROR: Illegal else wihout matching if/when
+        encountered_errors = true;
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_Break ||
+                                                         CurrentToken(state).keyword == Keyword_Continue))
+    {
+        bool is_break = (CurrentToken(state).keyword == Keyword_Break);
+        
+        SkipCurrentToken(state);
+        
+        if (is_break) *statement = PushStatement(state, Statement_Break);
+        else          *statement = PushStatement(state, Statement_Continue);
+        
+        if (!IsCurrentToken(state, Token_Semicolon))
+        {
+            if (!ParseExpression(state, (is_break ? &(*statement)->break_statement.label : &(*statement)->continue_statement.label)))
+            {
+                encountered_errors = true;
+            }
+        }
+        
+        if (!encountered_errors)
+        {
+            if (!IsCurrentToken(state, Token_Semicolon))
+            {
+                //// ERROR: Missing terminating semicolon after continue/break
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                SkipCurrentToken(state);
+                
+                (*statement)->text = TextSincePos(state, start_of_statement);
+            }
+        }
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Defer)
+    {
+        SkipCurrentToken(state);
+        
+        *statement = PushStatement(state, Statement_Defer);
+        
+        if (!ParseStatement(state, &(*statement)->defer_statement.statement)) encountered_errors = true;
+        else
+        {
+            (*statement)->text = TextSincePos(state, start_of_statement);
+        }
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Return)
+    {
+        SkipCurrentToken(state);
+        
+        *statement = PushStatement(state, Statement_Return);
+        
+        if (!IsCurrentToken(state, Token_Semicolon))
+        {
+            if (!ParseNamedArgumentList(state, &(*statement)->return_statement.arguments))
+            {
+                encountered_errors = true;
+            }
+        }
+        
+        if (!encountered_errors)
+        {
+            if (!IsCurrentToken(state, Token_Semicolon))
+            {
+                //// ERROR: Missing terminating semicolon after return statement
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                SkipCurrentToken(state);
+                
+                (*statement)->text = TextSincePos(state, start_of_statement);
+            }
+        }
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Import ||
+             (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using &&
+              IsPeekToken(state, Token_Identifier) && PeekToken(state).keyword == Keyword_Import))
+    {
+        NOT_IMPLEMENTED;
+    }
+    
+    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Include ||
+             (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using &&
+              IsPeekToken(state, Token_Identifier) && PeekToken(state).keyword == Keyword_Include))
+    {
+        NOT_IMPLEMENTED;
+    }
+    
+    else
+    {
+        bool is_using           = false;
+        Expression* expressions = 0;
+        
+        {
+            if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using)
+            {
+                is_using = true;
+                
+                SkipCurrentToken(state);
+            }
+            
+            Expression** current_expression = &expressions;
+            
+            while (!encountered_errors)
+            {
+                if (!ParseExpression(state, current_expression)) encountered_errors = true;
+                else
+                {
+                    if (IsCurrentToken(state, Token_Comma))
+                    {
+                        SkipCurrentToken(state);
+                        
+                        current_expression = &(*current_expression)->next;
+                    }
+                    
+                    else break;
+                }
+            }
+        }
+        
+        if (!encountered_errors)
+        {
+            if (IsCurrentToken(state, Token_Colon))
+            {
+                SkipCurrentToken(state);
+                
+                if (IsCurrentToken(state, Token_OpenBrace) ||
+                    IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_If   ||
+                                                                CurrentToken(state).keyword == Keyword_When ||
+                                                                CurrentToken(state).keyword == Keyword_Else))
+                {
+                    if (expressions->next != 0)
+                    {
+                        //// ERROR: multiple labels
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        if (is_using)
+                        {
+                            //// ERROR: Illegal use of using on labeled statement
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            if (!ParseStatement(state, statement)) encountered_errors = true;
+                            else
+                            {
+                                if      ((*statement)->kind == Statement_Block) (*statement)->block.label          = expressions;
+                                else if ((*statement)->kind == Statement_If)    (*statement)->if_statement.label   = expressions;
+                                else                                            (*statement)->when_statement.label = expressions;
+                                
+                                (*statement)->text = TextSincePos(state, expressions->text.pos);
+                            }
+                        }
+                    }
+                }
+                
+                else
+                {
+                    Expression* names  = expressions;
+                    Expression* type   = 0;
+                    Expression* values = 0;
+                    bool is_uninitialized = false;
+                    bool is_constant      = false;
+                    
+                    if (!IsCurrentToken(state, Token_Equal))
+                    {
+                        if (!ParseExpression(state, &type)) encountered_errors = true;
+                        else
+                        {
+                            if (IsCurrentToken(state, Token_Comma))
+                            {
+                                //// ERROR: Declarations support only one type specifier
+                                encountered_errors = true;
+                            }
+                        }
+                    }
+                    
+                    if (!encountered_errors && (IsCurrentToken(state, Token_Equal) ||
+                                                IsCurrentToken(state, Token_Colon)))
+                    {
+                        is_constant = IsCurrentToken(state, Token_Colon);
+                        
+                        SkipCurrentToken(state);
+                        
+                        if (IsCurrentToken(state, Token_MinusMinusMinus))
+                        {
+                            if (is_constant)
+                            {
+                                //// ERROR: Constants cannot be left uninitialized
+                                encountered_errors = true;
+                            }
+                            
+                            else
+                            {
+                                is_uninitialized = true;
+                                
+                                SkipCurrentToken(state);
+                            }
+                        }
+                        
+                        else
+                        {
+                            Expression** current_expression = &values;
+                            
+                            while (!encountered_errors)
+                            {
+                                if (!ParseExpression(state, current_expression)) encountered_errors = true;
+                                else
+                                {
+                                    if (IsCurrentToken(state, Token_Comma))
+                                    {
+                                        SkipCurrentToken(state);
+                                        
+                                        current_expression = &(*current_expression)->next;
+                                    }
+                                    
+                                    else break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        if (is_constant)
+                        {
+                            *statement = PushStatement(state, Statement_ConstDecl);
+                            (*statement)->constant_decl.names    = names;
+                            (*statement)->constant_decl.type     = type;
+                            (*statement)->constant_decl.values   = values;
+                            (*statement)->constant_decl.is_using = is_using;
+                        }
+                        
+                        else
+                        {
+                            *statement = PushStatement(state, Statement_VarDecl);
+                            (*statement)->variable_decl.names            = names;
+                            (*statement)->variable_decl.type             = type;
+                            (*statement)->variable_decl.values           = values;
+                            (*statement)->variable_decl.is_uninitialized = is_uninitialized;
+                            (*statement)->variable_decl.is_using         = is_using;
+                        }
+                        
+                        if (!IsCurrentToken(state, Token_Semicolon))
+                        {
+                            //// ERROR: Missing terminating semicolon after declaration
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            SkipCurrentToken(state);
+                            
+                            (*statement)->text = TextSincePos(state, expressions->text.pos);
+                        }
+                    }
+                }
+            }
+            
+            else
+            {
+                Enum8(EXPRESSION_KIND) kind = Expr_Invalid;
+                
+                switch (CurrentTokenKind(state))
+                {
+                    case Token_OrEqual:             kind = Expr_Or;          break;
+                    case Token_AndEqual:            kind = Expr_And;         break;
+                    case Token_PlusEqual:           kind = Expr_Add;         break;
+                    case Token_MinusEqual:          kind = Expr_Sub;         break;
+                    case Token_BitOrEqual:          kind = Expr_BitOr;       break;
+                    case Token_HatEqual:            kind = Expr_BitXor;      break;
+                    case Token_StarEqual:           kind = Expr_Mul;         break;
+                    case Token_SlashEqual:          kind = Expr_Div;         break;
+                    case Token_PercentageEqual:     kind = Expr_Rem;         break;
+                    case Token_BitAndEqual:         kind = Expr_BitAnd;      break;
+                    case Token_LessLessEqual:       kind = Expr_LShift;      break;
+                    case Token_GreaterGreaterEqual: kind = Expr_RShift;      break;
+                }
+                
+                if (IsCurrentToken(state, Token_Equal) || kind != Expr_Invalid)
+                {
+                    SkipCurrentToken(state);
+                    
+                    if (is_using)
+                    {
+                        //// ERROR: Illegal use of using on assignment statement
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        *statement = PushStatement(state, Statement_Assignment);
+                        (*statement)->assignment_statement.op  = kind;
+                        (*statement)->assignment_statement.lhs = expressions;
+                        
+                        Expression** current_expression = &(*statement)->assignment_statement.rhs;
+                        
+                        while (!encountered_errors)
+                        {
+                            if (!ParseExpression(state, current_expression)) encountered_errors = true;
+                            else
+                            {
+                                if (IsCurrentToken(state, Token_Comma))
+                                {
+                                    SkipCurrentToken(state);
+                                    
+                                    current_expression = &(*current_expression)->next;
+                                }
+                                
+                                else break;
+                            }
+                        }
+                    }
+                }
+                
+                else
+                {
+                    if (expressions->next != 0)
+                    {
+                        //// ERROR: Use of comma separated expressions is illegal outside assignment statements and argument lists
+                        encountered_errors = true;
+                    }
+                    
+                    else if (!IsCurrentToken(state, Token_Semicolon))
+                    {
+                        //// ERROR: Missing semicolon after expression statement
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        SkipCurrentToken(state);
+                        
+                        if (is_using)
+                        {
+                            *statement = PushStatement(state, Statement_Using);
+                            (*statement)->using_statement.symbol = expressions;
+                            (*statement)->text                   = TextSincePos(state, expressions->text.pos);
+                        }
+                        
+                        else
+                        {
+                            *statement = PushStatement(state, Statement_Expression);
+                            (*statement)->expression = expressions;
+                            (*statement)->text       = TextSincePos(state, expressions->text.pos);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return !encountered_errors;
+}
+
 API_FUNC bool
-ParseString(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, AST_Node** ast)
+ParseString(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, Statement** ast)
 {
     bool encountered_errors = false;
     

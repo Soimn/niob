@@ -203,6 +203,13 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                     
                     token->kind += 3*'>';
                 }
+                
+                else if (token->kind == '-' && content[offset] == '-' && content[offset + 1] == '-')
+                {
+                    offset += 2;
+                    
+                    token->kind += 2*'-' + 2*'-';
+                }
             }
             
             else if (content[offset] == ':' ||
@@ -261,6 +268,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                         [Keyword_Union]    = CONST_STRING("union"),
                         [Keyword_Enum]     = CONST_STRING("enum"),
                         [Keyword_If]       = CONST_STRING("if"),
+                        [Keyword_When]     = CONST_STRING("when"),
                         [Keyword_Else]     = CONST_STRING("else"),
                         [Keyword_While]    = CONST_STRING("while"),
                         [Keyword_Break]    = CONST_STRING("break"),
@@ -271,6 +279,8 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                         [Keyword_True]     = CONST_STRING("true"),
                         [Keyword_False]    = CONST_STRING("false"),
                         [Keyword_Do]       = CONST_STRING("do"),
+                        [Keyword_Import]   = CONST_STRING("import"),
+                        [Keyword_Include]  = CONST_STRING("include"),
                     };
                     
                     for (umm i = 0; i < ARRAY_SIZE(KeywordStrings); ++i)
