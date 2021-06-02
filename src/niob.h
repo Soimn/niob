@@ -201,6 +201,7 @@ enum KEYWORD_KIND
     Keyword_Do,
     Keyword_Import,
     Keyword_Include,
+    Keyword_Foreign,
     
     KEYWORD_COUNT
 };
@@ -434,8 +435,7 @@ typedef struct Statement
         struct
         {
             Expression* label;
-            struct Statement* first_child;
-            struct Statement* last_child;
+            struct Statement* statements;
         } block;
         
         Expression* expression;

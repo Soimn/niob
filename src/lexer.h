@@ -281,6 +281,7 @@ LexString(String string, Memory_Arena* token_arena, Memory_Arena* string_arena, 
                         [Keyword_Do]       = CONST_STRING("do"),
                         [Keyword_Import]   = CONST_STRING("import"),
                         [Keyword_Include]  = CONST_STRING("include"),
+                        [Keyword_Foreign]  = CONST_STRING("foreign"),
                     };
                     
                     for (umm i = 0; i < ARRAY_SIZE(KeywordStrings); ++i)

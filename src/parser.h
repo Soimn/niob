@@ -10,10 +10,13 @@ typedef struct Parser_State
 void
 SkipCurrentToken(Parser_State state)
 {
-    ASSERT(state.current_token->next != 0);
-    
-    state.offset_to_end_of_last_token = state.current_token->text.pos.offset + state.current_token->text.length;
-    state.current_token               = state.current_token->next;
+    do
+    {
+        ASSERT(state.current_token->next != 0);
+        
+        state.offset_to_end_of_last_token = state.current_token->text.pos.offset + state.current_token->text.length;
+        state.current_token               = state.current_token->next;
+    } while (state.current_token->kind == Token_Comment);
 }
 
 Enum32(TOKEN_KIND)
@@ -34,6 +37,12 @@ IsPeekToken(Parser_State state, Enum32(TOKEN_KIND) kind)
     return (state.current_token->next->kind == kind);
 }
 
+bool
+IsNextPeekToken(Parser_State state, Enum32(TOKEN_KIND) kind)
+{
+    return (state.current_token->next->next->kind == kind);
+}
+
 Token
 CurrentToken(Parser_State state)
 {
@@ -43,7 +52,13 @@ CurrentToken(Parser_State state)
 Token
 PeekToken(Parser_State state)
 {
-    return *state.current_token;
+    return *state.current_token->next;
+}
+
+Token
+NextPeekToken(Parser_State state)
+{
+    return *state.current_token->next->next;
 }
 
 Text_Pos
@@ -698,11 +713,270 @@ ParseExpression(Parser_State state, Expression** expression)
 }
 
 bool
-ParseStatement(Parser_State state, Statement** statement)
+ParseExpressionAssignmentOrVariableDeclaration(Parser_State state, Statement* statement)
+{
+    bool encountered_errors = false;
+    
+    bool is_using           = false;
+    Expression* expressions = 0;
+    
+    if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using)
+    {
+        is_using = true;
+        
+        SkipCurrentToken(state);
+    }
+    
+    {
+        Expression** current_expression = &expressions;
+        
+        while (!encountered_errors)
+        {
+            if (!ParseExpression(state, current_expression)) encountered_errors = true;
+            else
+            {
+                if (IsCurrentToken(state, Token_Comma))
+                {
+                    SkipCurrentToken(state);
+                    
+                    current_expression = &(*current_expression)->next;
+                }
+                
+                else break;
+            }
+        }
+    }
+    
+    if (!encountered_errors)
+    {
+        if (IsCurrentToken(state, Token_Colon))
+        {
+            SkipCurrentToken(state);
+            
+            Expression* names  = expressions;
+            Expression* type   = 0;
+            Expression* values = 0;
+            bool is_uninitialized = false;
+            bool is_constant      = false;
+            
+            if (!IsCurrentToken(state, Token_Equal))
+            {
+                if (!ParseExpression(state, &type)) encountered_errors = true;
+                else
+                {
+                    if (IsCurrentToken(state, Token_Comma))
+                    {
+                        //// ERROR: Declarations support only one type specifier
+                        encountered_errors = true;
+                    }
+                }
+            }
+            
+            if (!encountered_errors && (IsCurrentToken(state, Token_Equal) ||
+                                        IsCurrentToken(state, Token_Colon)))
+            {
+                is_constant = IsCurrentToken(state, Token_Colon);
+                
+                SkipCurrentToken(state);
+                
+                if (IsCurrentToken(state, Token_MinusMinusMinus))
+                {
+                    if (is_constant)
+                    {
+                        //// ERROR: Constants cannot be left uninitialized
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        is_uninitialized = true;
+                        
+                        SkipCurrentToken(state);
+                    }
+                }
+                
+                else
+                {
+                    Expression** current_expression = &values;
+                    
+                    while (!encountered_errors)
+                    {
+                        if (!ParseExpression(state, current_expression)) encountered_errors = true;
+                        else
+                        {
+                            if (IsCurrentToken(state, Token_Comma))
+                            {
+                                SkipCurrentToken(state);
+                                
+                                current_expression = &(*current_expression)->next;
+                            }
+                            
+                            else break;
+                        }
+                    }
+                }
+            }
+            
+            if (!encountered_errors)
+            {
+                if (is_constant)
+                {
+                    statement->kind = Statement_ConstDecl;
+                    statement->constant_decl.names    = names;
+                    statement->constant_decl.type     = type;
+                    statement->constant_decl.values   = values;
+                    statement->constant_decl.is_using = is_using;
+                }
+                
+                else
+                {
+                    statement->kind = Statement_VarDecl;
+                    statement->variable_decl.names            = names;
+                    statement->variable_decl.type             = type;
+                    statement->variable_decl.values           = values;
+                    statement->variable_decl.is_uninitialized = is_uninitialized;
+                    statement->variable_decl.is_using         = is_using;
+                }
+                
+                if (!IsCurrentToken(state, Token_Semicolon))
+                {
+                    //// ERROR: Missing terminating semicolon after declaration
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipCurrentToken(state);
+                    
+                    statement->text = TextSincePos(state, expressions->text.pos);
+                }
+            }
+        }
+        
+        else
+        {
+            Enum8(EXPRESSION_KIND) kind = Expr_Invalid;
+            
+            switch (CurrentTokenKind(state))
+            {
+                case Token_OrEqual:             kind = Expr_Or;          break;
+                case Token_AndEqual:            kind = Expr_And;         break;
+                case Token_PlusEqual:           kind = Expr_Add;         break;
+                case Token_MinusEqual:          kind = Expr_Sub;         break;
+                case Token_BitOrEqual:          kind = Expr_BitOr;       break;
+                case Token_HatEqual:            kind = Expr_BitXor;      break;
+                case Token_StarEqual:           kind = Expr_Mul;         break;
+                case Token_SlashEqual:          kind = Expr_Div;         break;
+                case Token_PercentageEqual:     kind = Expr_Rem;         break;
+                case Token_BitAndEqual:         kind = Expr_BitAnd;      break;
+                case Token_LessLessEqual:       kind = Expr_LShift;      break;
+                case Token_GreaterGreaterEqual: kind = Expr_RShift;      break;
+            }
+            
+            if (IsCurrentToken(state, Token_Equal) || kind != Expr_Invalid)
+            {
+                SkipCurrentToken(state);
+                
+                if (is_using)
+                {
+                    //// ERROR: Illegal use of using on assignment statement
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    statement->kind = Statement_Assignment;
+                    statement->assignment_statement.op  = kind;
+                    statement->assignment_statement.lhs = expressions;
+                    
+                    Expression** current_expression = &statement->assignment_statement.rhs;
+                    
+                    while (!encountered_errors)
+                    {
+                        if (!ParseExpression(state, current_expression)) encountered_errors = true;
+                        else
+                        {
+                            if (IsCurrentToken(state, Token_Comma))
+                            {
+                                SkipCurrentToken(state);
+                                
+                                current_expression = &(*current_expression)->next;
+                            }
+                            
+                            else break;
+                        }
+                    }
+                }
+            }
+            
+            else
+            {
+                if (expressions->next != 0)
+                {
+                    //// ERROR: Use of comma separated expressions is illegal outside assignment statements and argument lists
+                    encountered_errors = true;
+                }
+                
+                else if (!IsCurrentToken(state, Token_Semicolon))
+                {
+                    //// ERROR: Missing semicolon after expression statement
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipCurrentToken(state);
+                    
+                    if (is_using)
+                    {
+                        statement->kind = Statement_Using;
+                        statement->using_statement.symbol = expressions;
+                        statement->text                   = TextSincePos(state, expressions->text.pos);
+                    }
+                    
+                    else
+                    {
+                        statement->kind = Statement_Expression;
+                        statement->expression = expressions;
+                        statement->text       = TextSincePos(state, expressions->text.pos);
+                    }
+                }
+            }
+        }
+    }
+    
+    return !encountered_errors;
+}
+
+bool
+ParseStatement(Parser_State state, Statement** statement, bool allow_do, bool allow_label)
 {
     bool encountered_errors = false;
     
     Text_Pos start_of_statement = CurrentTextPos(state);
+    
+    Expression* label = 0;
+    
+    if (allow_label)
+    {
+        if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Invalid && IsPeekToken(state, Token_Colon) &&
+            (IsNextPeekToken(state, Token_OpenBrace) ||
+             IsNextPeekToken(state, Token_Identifier) && (NextPeekToken(state).keyword == Keyword_If ||
+                                                          NextPeekToken(state).keyword == Keyword_When)))
+        {
+            if (!ParseExpression(state, &label))
+            {
+                // NOTE: Something has gone terribly wrong if this happens
+                INVALID_CODE_PATH;
+            }
+            
+            else
+            {
+                ASSERT(IsCurrentToken(state, Token_Colon));
+                SkipCurrentToken(state);
+            }
+        }
+    }
     
     if (IsCurrentToken(state, Token_EndOfStream))
     {
@@ -716,9 +990,53 @@ ParseStatement(Parser_State state, Statement** statement)
         encountered_errors = true;
     }
     
-    else if (IsCurrentToken(state, Token_OpenBrace))
+    else if (IsCurrentToken(state, Token_OpenBrace) ||
+             IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Do)
     {
-        NOT_IMPLEMENTED;
+        *statement = PushStatement(state, Statement_Block);
+        (*statement)->block.label = label;
+        
+        if (IsCurrentToken(state, Token_OpenBrace))
+        {
+            SkipCurrentToken(state);
+            
+            Statement** current_statement = &(*statement)->block.statements;
+            Statement* prev_statement     = 0;
+            
+            while (!encountered_errors && IsCurrentToken(state, Token_CloseBrace))
+            {
+                if (!ParseStatement(state, current_statement, false, true)) encountered_errors = true;
+                else
+                {
+                    if (prev_statement) prev_statement->next = *current_statement;
+                    
+                    (*current_statement)->prev = prev_statement;
+                    prev_statement             = *current_statement;
+                }
+            }
+            
+            if (IsCurrentToken(state, Token_CloseBrace))
+            {
+                SkipCurrentToken(state);
+            }
+        }
+        
+        else
+        {
+            if (!allow_do)
+            {
+                //// ERROR: Illegal use of do
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                if (!ParseStatement(state, &(*statement)->block.statements, false, false))
+                {
+                    encountered_errors = true;
+                }
+            }
+        }
     }
     
     else if (IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_If ||
@@ -728,7 +1046,110 @@ ParseStatement(Parser_State state, Statement** statement)
         
         SkipCurrentToken(state);
         
-        NOT_IMPLEMENTED;
+        Statement temp_statement = {0};
+        
+        Statement* init            = 0;
+        Expression* condition      = 0;
+        Statement* true_statement  = 0;
+        Statement* false_statement = 0;
+        
+        if (!ParseExpressionAssignmentOrVariableDeclaration(state, &temp_statement)) encountered_errors = true;
+        else
+        {
+            if (IsCurrentToken(state, Token_Semicolon))
+            {
+                init = PushStatement(state, Statement_Invalid);
+                *init = temp_statement;
+                
+                SkipCurrentToken(state);
+                
+                if (!ParseExpression(state, &condition))
+                {
+                    encountered_errors = true;
+                }
+            }
+            
+            else
+            {
+                if (temp_statement.kind == Statement_Assignment ||
+                    temp_statement.kind == Statement_VarDecl    ||
+                    temp_statement.kind == Statement_ConstDecl)
+                {
+                    //// ERROR: missing condition in if/when statement
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    ASSERT(temp_statement.kind == Statement_Expression);
+                    
+                    condition = temp_statement.expression;
+                }
+            }
+            
+            if (!encountered_errors)
+            {
+                if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Do ||
+                    IsCurrentToken(state, Token_OpenBrace))
+                {
+                    if (!ParseStatement(state, &true_statement, true, false)) encountered_errors = true;
+                    else
+                    {
+                        if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Else)
+                        {
+                            SkipCurrentToken(state);
+                            
+                            if (!ParseStatement(state, &false_statement, true, false))
+                            {
+                                encountered_errors = true;
+                            }
+                        }
+                        
+                        if (!encountered_errors)
+                        {
+                            if (is_if)
+                            {
+                                *statement = PushStatement(state, Statement_If);
+                                (*statement)->if_statement.label           = label;
+                                (*statement)->if_statement.init            = init;
+                                (*statement)->if_statement.condition       = condition;
+                                (*statement)->if_statement.true_statement  = true_statement;
+                                (*statement)->if_statement.false_statement = false_statement;
+                                (*statement)->text                         = TextSincePos(state, start_of_statement);
+                            }
+                            
+                            else
+                            {
+                                *statement = PushStatement(state, Statement_When);
+                                (*statement)->when_statement.label           = label;
+                                (*statement)->when_statement.init            = init;
+                                (*statement)->when_statement.condition       = condition;
+                                (*statement)->when_statement.true_statement  = true_statement;
+                                (*statement)->when_statement.false_statement = false_statement;
+                                (*statement)->text                           = TextSincePos(state, start_of_statement);
+                            }
+                        }
+                    }
+                }
+                
+                else
+                {
+                    if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Invalid && IsPeekToken(state, Token_Colon) &&
+                        (IsNextPeekToken(state, Token_OpenBrace) ||
+                         IsNextPeekToken(state, Token_Identifier) && NextPeekToken(state).keyword == Keyword_Do))
+                    {
+                        //// ERROR: Illegal use of label on if/when body
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        //// ERROR: Missing if/when body
+                        encountered_errors = true;
+                    }
+                }
+            }
+        }
     }
     
     else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Else)
@@ -759,7 +1180,7 @@ ParseStatement(Parser_State state, Statement** statement)
         {
             if (!IsCurrentToken(state, Token_Semicolon))
             {
-                //// ERROR: Missing terminating semicolon after continue/break
+                //// ERROR: Missing terminating semicolon after statement
                 encountered_errors = true;
             }
             
@@ -778,7 +1199,7 @@ ParseStatement(Parser_State state, Statement** statement)
         
         *statement = PushStatement(state, Statement_Defer);
         
-        if (!ParseStatement(state, &(*statement)->defer_statement.statement)) encountered_errors = true;
+        if (!ParseStatement(state, &(*statement)->defer_statement.statement, false, false)) encountered_errors = true;
         else
         {
             (*statement)->text = TextSincePos(state, start_of_statement);
@@ -803,7 +1224,7 @@ ParseStatement(Parser_State state, Statement** statement)
         {
             if (!IsCurrentToken(state, Token_Semicolon))
             {
-                //// ERROR: Missing terminating semicolon after return statement
+                //// ERROR: Missing terminating semicolon after statement
                 encountered_errors = true;
             }
             
@@ -816,284 +1237,54 @@ ParseStatement(Parser_State state, Statement** statement)
         }
     }
     
-    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Import ||
+    else if (IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_Include ||
+                                                         CurrentToken(state).keyword == Keyword_Import  ||
+                                                         CurrentToken(state).keyword == Keyword_Foreign) ||
              (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using &&
-              IsPeekToken(state, Token_Identifier) && PeekToken(state).keyword == Keyword_Import))
+              IsPeekToken(state, Token_Identifier) && (PeekToken(state).keyword == Keyword_Include ||
+                                                       PeekToken(state).keyword == Keyword_Import ||
+                                                       PeekToken(state).keyword == Keyword_Foreign)))
     {
-        NOT_IMPLEMENTED;
-    }
-    
-    else if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Include ||
-             (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using &&
-              IsPeekToken(state, Token_Identifier) && PeekToken(state).keyword == Keyword_Include))
-    {
-        NOT_IMPLEMENTED;
+        bool is_using = false;
+        
+        if (CurrentToken(state).keyword == Keyword_Using)
+        {
+            is_using = true;
+            
+            SkipCurrentToken(state);
+        }
+        
+        if (CurrentToken(state).keyword == Keyword_Import)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else if (CurrentToken(state).keyword == Keyword_Include)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        else
+        {
+            NOT_IMPLEMENTED;
+        }
     }
     
     else
     {
-        bool is_using           = false;
-        Expression* expressions = 0;
+        *statement = PushStatement(state, Statement_Invalid);
         
+        if (!ParseExpressionAssignmentOrVariableDeclaration(state, *statement)) encountered_errors = true;
+        else
         {
-            if (IsCurrentToken(state, Token_Identifier) && CurrentToken(state).keyword == Keyword_Using)
+            if (IsCurrentToken(state, Token_Semicolon)) SkipCurrentToken(state);
+            else if (!((*statement)->kind == Statement_ConstDecl && (*statement)->constant_decl.values->next == 0 &&
+                       ((*statement)->constant_decl.values->kind == Expr_Proc   ||
+                        (*statement)->constant_decl.values->kind == Expr_Struct ||
+                        (*statement)->constant_decl.values->kind == Expr_Enum)))
             {
-                is_using = true;
-                
-                SkipCurrentToken(state);
-            }
-            
-            Expression** current_expression = &expressions;
-            
-            while (!encountered_errors)
-            {
-                if (!ParseExpression(state, current_expression)) encountered_errors = true;
-                else
-                {
-                    if (IsCurrentToken(state, Token_Comma))
-                    {
-                        SkipCurrentToken(state);
-                        
-                        current_expression = &(*current_expression)->next;
-                    }
-                    
-                    else break;
-                }
-            }
-        }
-        
-        if (!encountered_errors)
-        {
-            if (IsCurrentToken(state, Token_Colon))
-            {
-                SkipCurrentToken(state);
-                
-                if (IsCurrentToken(state, Token_OpenBrace) ||
-                    IsCurrentToken(state, Token_Identifier) && (CurrentToken(state).keyword == Keyword_If   ||
-                                                                CurrentToken(state).keyword == Keyword_When ||
-                                                                CurrentToken(state).keyword == Keyword_Else))
-                {
-                    if (expressions->next != 0)
-                    {
-                        //// ERROR: multiple labels
-                        encountered_errors = true;
-                    }
-                    
-                    else
-                    {
-                        if (is_using)
-                        {
-                            //// ERROR: Illegal use of using on labeled statement
-                            encountered_errors = true;
-                        }
-                        
-                        else
-                        {
-                            if (!ParseStatement(state, statement)) encountered_errors = true;
-                            else
-                            {
-                                if      ((*statement)->kind == Statement_Block) (*statement)->block.label          = expressions;
-                                else if ((*statement)->kind == Statement_If)    (*statement)->if_statement.label   = expressions;
-                                else                                            (*statement)->when_statement.label = expressions;
-                                
-                                (*statement)->text = TextSincePos(state, expressions->text.pos);
-                            }
-                        }
-                    }
-                }
-                
-                else
-                {
-                    Expression* names  = expressions;
-                    Expression* type   = 0;
-                    Expression* values = 0;
-                    bool is_uninitialized = false;
-                    bool is_constant      = false;
-                    
-                    if (!IsCurrentToken(state, Token_Equal))
-                    {
-                        if (!ParseExpression(state, &type)) encountered_errors = true;
-                        else
-                        {
-                            if (IsCurrentToken(state, Token_Comma))
-                            {
-                                //// ERROR: Declarations support only one type specifier
-                                encountered_errors = true;
-                            }
-                        }
-                    }
-                    
-                    if (!encountered_errors && (IsCurrentToken(state, Token_Equal) ||
-                                                IsCurrentToken(state, Token_Colon)))
-                    {
-                        is_constant = IsCurrentToken(state, Token_Colon);
-                        
-                        SkipCurrentToken(state);
-                        
-                        if (IsCurrentToken(state, Token_MinusMinusMinus))
-                        {
-                            if (is_constant)
-                            {
-                                //// ERROR: Constants cannot be left uninitialized
-                                encountered_errors = true;
-                            }
-                            
-                            else
-                            {
-                                is_uninitialized = true;
-                                
-                                SkipCurrentToken(state);
-                            }
-                        }
-                        
-                        else
-                        {
-                            Expression** current_expression = &values;
-                            
-                            while (!encountered_errors)
-                            {
-                                if (!ParseExpression(state, current_expression)) encountered_errors = true;
-                                else
-                                {
-                                    if (IsCurrentToken(state, Token_Comma))
-                                    {
-                                        SkipCurrentToken(state);
-                                        
-                                        current_expression = &(*current_expression)->next;
-                                    }
-                                    
-                                    else break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (!encountered_errors)
-                    {
-                        if (is_constant)
-                        {
-                            *statement = PushStatement(state, Statement_ConstDecl);
-                            (*statement)->constant_decl.names    = names;
-                            (*statement)->constant_decl.type     = type;
-                            (*statement)->constant_decl.values   = values;
-                            (*statement)->constant_decl.is_using = is_using;
-                        }
-                        
-                        else
-                        {
-                            *statement = PushStatement(state, Statement_VarDecl);
-                            (*statement)->variable_decl.names            = names;
-                            (*statement)->variable_decl.type             = type;
-                            (*statement)->variable_decl.values           = values;
-                            (*statement)->variable_decl.is_uninitialized = is_uninitialized;
-                            (*statement)->variable_decl.is_using         = is_using;
-                        }
-                        
-                        if (!IsCurrentToken(state, Token_Semicolon))
-                        {
-                            //// ERROR: Missing terminating semicolon after declaration
-                            encountered_errors = true;
-                        }
-                        
-                        else
-                        {
-                            SkipCurrentToken(state);
-                            
-                            (*statement)->text = TextSincePos(state, expressions->text.pos);
-                        }
-                    }
-                }
-            }
-            
-            else
-            {
-                Enum8(EXPRESSION_KIND) kind = Expr_Invalid;
-                
-                switch (CurrentTokenKind(state))
-                {
-                    case Token_OrEqual:             kind = Expr_Or;          break;
-                    case Token_AndEqual:            kind = Expr_And;         break;
-                    case Token_PlusEqual:           kind = Expr_Add;         break;
-                    case Token_MinusEqual:          kind = Expr_Sub;         break;
-                    case Token_BitOrEqual:          kind = Expr_BitOr;       break;
-                    case Token_HatEqual:            kind = Expr_BitXor;      break;
-                    case Token_StarEqual:           kind = Expr_Mul;         break;
-                    case Token_SlashEqual:          kind = Expr_Div;         break;
-                    case Token_PercentageEqual:     kind = Expr_Rem;         break;
-                    case Token_BitAndEqual:         kind = Expr_BitAnd;      break;
-                    case Token_LessLessEqual:       kind = Expr_LShift;      break;
-                    case Token_GreaterGreaterEqual: kind = Expr_RShift;      break;
-                }
-                
-                if (IsCurrentToken(state, Token_Equal) || kind != Expr_Invalid)
-                {
-                    SkipCurrentToken(state);
-                    
-                    if (is_using)
-                    {
-                        //// ERROR: Illegal use of using on assignment statement
-                        encountered_errors = true;
-                    }
-                    
-                    else
-                    {
-                        *statement = PushStatement(state, Statement_Assignment);
-                        (*statement)->assignment_statement.op  = kind;
-                        (*statement)->assignment_statement.lhs = expressions;
-                        
-                        Expression** current_expression = &(*statement)->assignment_statement.rhs;
-                        
-                        while (!encountered_errors)
-                        {
-                            if (!ParseExpression(state, current_expression)) encountered_errors = true;
-                            else
-                            {
-                                if (IsCurrentToken(state, Token_Comma))
-                                {
-                                    SkipCurrentToken(state);
-                                    
-                                    current_expression = &(*current_expression)->next;
-                                }
-                                
-                                else break;
-                            }
-                        }
-                    }
-                }
-                
-                else
-                {
-                    if (expressions->next != 0)
-                    {
-                        //// ERROR: Use of comma separated expressions is illegal outside assignment statements and argument lists
-                        encountered_errors = true;
-                    }
-                    
-                    else if (!IsCurrentToken(state, Token_Semicolon))
-                    {
-                        //// ERROR: Missing semicolon after expression statement
-                        encountered_errors = true;
-                    }
-                    
-                    else
-                    {
-                        SkipCurrentToken(state);
-                        
-                        if (is_using)
-                        {
-                            *statement = PushStatement(state, Statement_Using);
-                            (*statement)->using_statement.symbol = expressions;
-                            (*statement)->text                   = TextSincePos(state, expressions->text.pos);
-                        }
-                        
-                        else
-                        {
-                            *statement = PushStatement(state, Statement_Expression);
-                            (*statement)->expression = expressions;
-                            (*statement)->text       = TextSincePos(state, expressions->text.pos);
-                        }
-                    }
-                }
+                //// ERROR: Missing terminating semicolon after statement
+                encountered_errors = true;
             }
         }
     }
@@ -1102,11 +1293,35 @@ ParseStatement(Parser_State state, Statement** statement)
 }
 
 API_FUNC bool
-ParseString(Token* tokens, Memory_Arena* ast_arena, Memory_Arena* string_arena, Error_Report* error_report, Statement** ast)
+ParseString(Token* tokens, Memory_Arena* ast_arena, Error_Report* error_report, Statement** ast)
 {
     bool encountered_errors = false;
     
-    NOT_IMPLEMENTED;
+    Parser_State state = {
+        .ast_arena                   = ast_arena,
+        .offset_to_end_of_last_token = 0,
+        .current_token               = tokens
+    };
+    
+    *ast = 0;
+    Statement* prev_statement = 0;
+    Statement** statement     = ast;
+    
+    while (!encountered_errors)
+    {
+        if (IsCurrentToken(state, Token_EndOfStream)) break;
+        else
+        {
+            if (!ParseStatement(state, statement, false, true)) encountered_errors = true;
+            else
+            {
+                if (prev_statement) prev_statement->next = *statement;
+                
+                (*statement)->prev = prev_statement;
+                prev_statement     = *statement;
+            }
+        }
+    }
     
     return !encountered_errors;
 }
