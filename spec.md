@@ -2,15 +2,35 @@
 
 The Niob programming language is a procedural systems programming language that aims to replace C for game programming.
 
+Goals:
+ - reflect hardware as closely as possible
+ - absolute clarity without needless verbosity
+ - maximal control to the programmer
+ - extensible and metaprogrammable
+
+The language draws a lot of inspiration from the languages Jai and Odin, as well as the comments by Casey Muratori on
+programming languages during his live streams working on Handmade Hero. The rest is mostly the authors disgust of how
+undefined behaviour has creeped into every little nook and cranny of the garbage pile that is the C specification.
+
 ## The problem with C
 There are countless problems with C in regards to the abstracted view of programming language design. Although this language
-tries to resolve those problems, they are not the primary concern. What the Niob programming language aims to do is to resolve
-all undefined behaviour introduced in C. A significant portion of the undefined behaviour, listed in appendix J of the
-ISO/IEC 9899:201x n1570 publicly available draft, of the C11 standard can easily be dealt with by throwing away the standard library
-and removing the notion of translation units. What is left is a small list of undefined behaviour that concerns integer and floating
-point operations, hardware exceptions, calling conventions, evaluation order, unaligned memory access, calling functions by pointer
-with wrong arguments, modification of the data segment. There are however a lot of undefined behaviour that is not listed in this
-appendix (e.g. infinite loops without side effects are undefined behaviour).
+tries to resolve those problems, they are not the primary concern. The major problem with C is that compilers are written
+against the C specification, which is not in line with common practices for C programming. This leads to a lot of
+disagreements between compiler authors and users of the language, as compilers have recently broken a lot of code that has
+worked for decades by being more agressive with optimization and taking advantage of undefined behaviour. It has clearly
+been shown through the usage of C, that the specification is not a good fit for actual software development, and a large
+part of this problem is the undefined behaviour. 
+
+What the Niob programming language aims to do is to resolve all undefined behaviour introduced in C. This does not only require
+a new language, but also a new optimizing backend, as LLVM takes advantage of a lot of undefined behaviour in C. A significant
+portion of the undefined behaviour, listed in appendix J of the ISO/IEC 9899:201x n1570 publicly available draft, of the C11
+standard can easily be dealt with by throwing away the standard library and removing the notion of multiple encapsulated
+translation units. What is left is a small list of undefined behaviour that concerns integer and floating point operations,
+hardware exceptions, calling conventions, evaluation order, unaligned memory access, calling functions by pointer
+with wrong arguments and modification of the data segment. There is however a lot of undefined behaviour that is not listed
+in this appendix (e.g. infinite loops without side effects are undefined behaviour), and since it would be a monumental, and
+honestly pointless, task to identify all implicit undefined behaviour in C, it has been decided that it would be wiser to
+focus on making language constructs that avoid those problems altogether.
 
 ## Resolving the undefined behaviour
 The approach chosen to resolve the undefined behaviour is to first restrict the problem to only relevant architectures, broker between
@@ -40,10 +60,38 @@ To support more than one architecture it is often necessary to define some sort 
 removed from hardware as e.g. the one in Forth, but any minute difference between architectures needs to either be solved by
 providing a compromise (i.e. defining an abstract machine with a mapping to hardware), or choosing the behaviour on one
 architecture or the other (essentially defining an abstract machine with the same semantics as the target architecture).
-On modern architectures this is rather easy, since most machines are little endian with IEEE 754 floating point support,
-however they do often differ when it comes to hardware exceptions and the effects of illegal operations.
+On modern architectures this is rather easy, since most machines use 2's complement little endian integers ans support
+IEEE 754 floating point, however they do often differ when it comes to hardware exceptions and the effects of illegal
+operations. An example of this is integer division by zero, which causes a divide error exception on x64, but no
+exception on arm. There are however some operations that seem to be legal on x64, but not arm (e.g. bitwise shifts seem
+to support negative shift values and interpret them as unsigned integers).
 
-## Syntax
+#### Integer representation and operations
+On x64 ...
+
+On ARM ...
+
+Rep, ops ...
+
+Implications
+
+#### Floating point representation and operations
+On x64 ...
+
+On ARM ...
+
+Rep, ops ...
+
+Implications
+
+#### Memory model
+On x64 ...
+
+On ARM ...
+
+Rep, ops ...
+
+Implications
 
 ## Integers
 Integers are 2's complement
