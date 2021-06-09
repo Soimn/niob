@@ -40,14 +40,12 @@ expressing architecture dependent behaviour.
 ### Restricting platform support
 Different architectures implement arithmetic operations and exceptions differently, and may also use a different memory model. To broker
 between every architecture in existence will quickly lead to the mess that C has made for itself. Since games primarily target desktop,
-console and mobile, a lot architectures for embedded systems can be neglected. According to the Steam hardware survey
-(https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam)
+console and mobile, a lot architectures for embedded systems can be neglected. According to the [Steam hardware survey](https://web.archive.org/web/20210602040435/https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam)
 all users of Steam use hardware based on the x86 or x64 architecture. Since 99.75% of users run 64bit operating systems, and 32bit
 systems have steadily declined in popularity, it can also be safe to assume that support for x64 is enough to cover the vast
-majority of users on desktop. In regards to consoles, the past few generations have been using
-PowerPC (Wii U, Wii, XBox 360, Playstation 3 & 2, GameCube), x64 (Playstation 5 & 4, XBox Series X/S & One),
-ARMv8 (Switch, Oculus Quest 1 & 2) and x86 (Xbox), with the facing out of both PowerPC and
-x86 (https://en.wikipedia.org/wiki/Home_video_game_console#List_of_home_video_game_consoles). Support for x64 and 64bit ARM will
+majority of users on desktop. In regards to consoles, the [past few generations](https://en.wikipedia.org/wiki/Home_video_game_console#List_of_home_video_game_consoles)
+have been using PowerPC (Wii U, Wii, XBox 360, Playstation 3 & 2, GameCube), x64 (Playstation 5 & 4, XBox Series X/S & One),
+ARMv8 (Switch, Oculus Quest 1 & 2) and x86 (Xbox), with the facing out of both PowerPC and x86. Support for x64 and 64bit ARM will
 therefore cover the newest two generations (except support for the Wii U), and seems to align with the direction of the console
 industry. Mobile is not a concern for this programming language, and will therefore be neglected in its entirety.
 
@@ -67,16 +65,54 @@ exception on arm. There are however some operations that seem to be legal on x64
 to support negative shift values and interpret them as unsigned integers).
 
 #### Integer representation and operations
-On x64 ...
+##### x64
+Integers on x64 are 2's complement signed and unsigned with sizes being powers of 2 ranging from 8 - 64 bit.
+A special value is defined for each size, named the integer indefinite. It is equal to 2^(size - 1). This is
+a special value returned by the x87 FPU when an invalid operation is detected when storing an interger in
+memory with the FIST/FISTP instruction, and the invalid operation exception is masked.
+Integers are represented in memory as consecutive bytes that are little endian.
+Addition and subtraction zero/sign extends and truncates to largest operand size (effectively wrapping addition/subtraction).
+Division zero/sign extends and truncates toward 0, hardware exception is thrown if divisor is 0 or the quotient is not representable as a 2's
+complement integer with a size equal to the largest sized operand.
+Multiplication zero/sign extends and truncates to largest operand size.
 
-On ARM ...
+##### ARM
+Integers on ARM are 2's complement signed and unsigned with sizes being powers of 2 ranging from 8 - 64 bit.
+Integers are respresented in memory as consecutive bytes that are little endian.
+Addition and subtraction zero/sign extends and truncates to largest operand size (effectively wrapping addition/subtraction)
+Division zero/sign extends and truncates toward 0, 0 is returned if divisor is 0 and result is truncated to largest operand size.
+Multiplication zero/sign extends and truncates to largest operand size.
 
-Rep, ops ...
+##### Niob
+Integers in Niob are 2's complement signed and unsigned with sizes being powers of 2 ranging from 8 - 64bit.
+Integers are represented in memory as consecutive bytes that are little endian.
+Addition, subtraction, division and multiplication all zero/sign extend and truncate result to largest operand size.
+Division truncates toward 0.
+Division by 0 and where the result is out of range (max and min value of largest operand size) are implementation defined.
 
-Implications
+##### Implications
+Niob cannot guarantee the result of a divide by 0 and INT_MIN / -1
 
 #### Floating point representation and operations
-On x64 ...
+x64 defines three floating point types: single-, double- and double extended precision which correspond to formats
+specified in IEEE 754. Conversion to and from half precision floats is also possible. The single- and double
+precision formats encode only the fractional part of the significand, as apposed to the double extended precision
+format which stores the leading digit explicitly (bit 63). Half precision, single precision, double precision and
+double extended precision are stored as 2, 4, 8 and 10 consecutive little endian bytes respectively. The double
+extended precision format is only operatable on by the x87 FPU.
+All operations obey IEEE 754.
+Addition and subtraction where one of the operands are a signaling NaN, operands are infinities of (add: different, sub: like)
+signs, source operand is a denormal value, result is too small, result is too large or the value cannot be represented exactly
+causes a floating point exception.
+Division where one of the operands is a signaling NaN, +- inf / +- inf, +- 0 / +- 0, source operand is a denormal value,
+divisor is +- 0, result is too small, result is too large or the value cannot be represented exactly causes a floating point
+exception.
+Multiplication where one of the operands are a signaling NaN, one operand is +- 0 and the other is +- inf, source operand
+is a denormal value, result is too small, result is too large or the value cannot be represented exactly causes a floating
+point exception.
+Conversion to integer truncates
+
+REMEMBER CONVERSIONS TO AND FROM INTEGER
 
 On ARM ...
 
@@ -93,7 +129,7 @@ Rep, ops ...
 
 Implications
 
-## Integers
+Integers
 Integers are 2's complement
 Addition and subtraction are wrapping
 Multiplication and division are masking
@@ -101,6 +137,16 @@ Shifts mask to legal range
 Bitwise and, or, xor and not behave as expected
 INT_MIN / -1, N / 0, conversions from OoB floats and negative shifts are implementation defined
 
-## Floating point
+Floating point
 Floats are IEEE 754 and behave according to that standard
 Exceptions may not be supported on ARM
+
+## Syntax
+
+## Values and types
+
+## Expressions
+
+## Statements
+
+## ...
