@@ -94,6 +94,7 @@ Division by 0 and where the result is out of range (max and min value of largest
 Niob cannot guarantee the result of a divide by 0 and INT_MIN / -1
 
 #### Floating point representation and operations
+##### x64
 x64 defines three floating point types: single-, double- and double extended precision which correspond to formats
 specified in IEEE 754. Conversion to and from half precision floats is also possible. The single- and double
 precision formats encode only the fractional part of the significand, as apposed to the double extended precision
@@ -110,15 +111,30 @@ exception.
 Multiplication where one of the operands are a signaling NaN, one operand is +- 0 and the other is +- inf, source operand
 is a denormal value, result is too small, result is too large or the value cannot be represented exactly causes a floating
 point exception.
-Conversion to integer truncates
+Conversion to integer rounds acording to the current rounding mode, floating point invalid exception is raised when the value
+cannot be represented in the target type after rounding. If this exception is masked the indefinite integer value is returned.
+Conversion from integer rounds according to the current rounding mode. An exception is raised when the result is not exactly
+representable in the target type.
+Conversion from double precision to single precision round according to the current rounding mode. An exception is raised when
+the result is not exactly representable in the target type.
 
-REMEMBER CONVERSIONS TO AND FROM INTEGER
+##### ARM
+ARM defines three floating point types: half-, single- and double precision which correspond to formats specified in IEEE 754.
+Conversion to and from a separate 16bit storage format is also possible. The half-, single- and double precision formats encode
+only the fractional part of the significand, and are stored as 2, 4, and 8 consecutive little endian bytes respectively.
+All operations obey IEEE 754.
+The support for floating point exceptions is implementation defined.
+Conversion to integer round toward 0.
+Conversion from integer round to nearest floating point number.
+Conversion between floating point types rounds to nearest.
 
-On ARM ...
+##### Niob
+Floating point number in Niob obey IEEE 754 and come in the sizes 32bit and 64bit. All operations obey IEEE 754, conversion to
+integer rounds toward 0, conversion from integer rounds toward nearest. Conversion between floating point types roun toward nearest.
+Exceptions thrown during invalid floating point operations is implementation defined.
 
-Rep, ops ...
-
-Implications
+##### Implications
+Niob cannot guarantee anything about floating point exceptions.
 
 #### Memory model
 On x64 ...
