@@ -35,7 +35,12 @@ focus on making language constructs that avoid those problems altogether.
 ## Resolving the undefined behaviour
 The approach chosen to resolve the undefined behaviour is to first restrict the problem to only relevant architectures, broker between
 these architectures to find a common representation that is as close to the actual hardware as possible and then dealing with ways of
-expressing architecture dependent behaviour.
+expressing architecture dependent behaviour. There are however several cases where the language cannot guarantee the result of an
+operation, or the resulting execution state. This is essentially undefined behaviour that is necessary for the language to be agnostic.
+The existance of this class of undefined behaviour may seem to contradict the primary goal of the language (remove all undefined behaviour
+from C), but it is deemed necessary, as without it, all platforms would have to emulate the behaviour of the chosen primary platform (which
+is undesirable for performance on those platforms). To mitigate the problems caused by this undefined behaviour, a complete list of all
+undefined behaviour in Niob is provided under [Architecture dependent behaviour in Niob](#Architecture-dependent-behaviour-in-Niob).
 
 ### Restricting platform support
 Different architectures implement arithmetic operations and exceptions differently, and may also use a different memory model. To broker
@@ -175,6 +180,11 @@ Niob cannot guarantee anything about floating point exceptions.
 
 ##### Implications
 
+### Architecture dependent behaviour in Niob
+Due to the differences between x64 and ARM, some subset of the language cannot be defined agnostically.
+This is a list of all architecture dependent behaviour in Niob:
+- The result and possible exceptions thrown by integer divide by zero and INT_MIN / -1
+- Possible exceptions thrown by illegal floating point operations
 
 ## Syntax
 
