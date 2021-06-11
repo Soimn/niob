@@ -63,6 +63,27 @@ IEEE 754 floating point, however they do often differ when it comes to hardware 
 operations. An example of this is integer division by zero, which causes a divide error exception on x64, but no
 exception on arm. There are however some operations that seem to be legal on x64, but not arm (e.g. bitwise shifts seem
 to support negative shift values and interpret them as unsigned integers).
+*NOTE:* the information about how x64 and ARM differ is solely derived from the Intel and ARM architectures software developer's manuals
+
+#### Bitwise operations
+##### x64
+and, or, xor, not and comparisons work as excepted.
+Bitshifts mask shift amount to 5 bits when run in 32bit mode, and 6 bits when in 64bit mode. (not explicitly stated, but seems to iterpret shift amount as unsigned)
+Rotates mask shift amount to 5 bits when run in 32bit mode, and 6 bits when in 64bit mode. (not explicitly stated but seems to interpret shift amount as unsigned)
+
+##### ARM
+and, or, xor, not and comparisons work as excepted.
+Bitshifts mask shift amount to 8. (not explicitly stated, but seems to interpret shift amount as unsigned)
+Rotates mask shift amount to 5 bits when run in 32bit mode, and 6 vits when in 64bit mode. (not explicitly stated, but seems to interpret shift amount as unsigned)
+
+##### Niob
+and, or, xor, not and comparisons behave as on would expect.
+Bitshifts and rotates interpret shift amount as unsigned and masks amount to log_2(operand size). (3 bits for 8bit operand, 4 bits for 16bit, ...)
+This is to allow similar semantics for 8bit and 16bit operands.
+Bits shifted off either end of the operand are either cleared or the result is extracted from the destination register.
+
+##### Implications
+Extra instructions are needed to mask the shift amount.
 
 #### Integer representation and operations
 ##### x64
@@ -137,25 +158,23 @@ Exceptions thrown during invalid floating point operations is implementation def
 Niob cannot guarantee anything about floating point exceptions.
 
 #### Memory model
-On x64 ...
+##### x64
 
-On ARM ...
+##### ARM
 
-Rep, ops ...
+##### Niob
 
-Implications
+##### Implications
 
-Integers
-Integers are 2's complement
-Addition and subtraction are wrapping
-Multiplication and division are masking
-Shifts mask to legal range
-Bitwise and, or, xor and not behave as expected
-INT_MIN / -1, N / 0, conversions from OoB floats and negative shifts are implementation defined
+#### Control flow
+##### x64
 
-Floating point
-Floats are IEEE 754 and behave according to that standard
-Exceptions may not be supported on ARM
+##### ARM
+
+##### Niob
+
+##### Implications
+
 
 ## Syntax
 
