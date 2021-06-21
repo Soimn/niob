@@ -1,239 +1,341 @@
-niob programming language
+# The Niob Programming Language
 
-for those who like to get off on jargon, this language is a compiled and statically typed procedural systems programming language
+**NOTE:**
+This document is a rough outline of the design of the Niob programming langaugen used to aid
+development, it is not meant to be a complete introduction to the language, nor an explanation of the
+rationale behind the design.
 
-Some of my gripes with C (which I would still use, if not for my stupid decision to "improve" it)
- - there is way too much implementation defined and undefined behaviour
- - there is no __standard__ library, only several "standard" libraries
- - lack of scope control (like using and restricted global access)
- - lack of automatic dereferencing (removing the -> operator and using . with automatic deref allows hot-cold splitting of structs without changing usage code)
- - lack of easy to use math primitives, and or, operator overloading
- - hard to parse
- - lack of type checked macros
- - no name string for enum values
- - no compiletime execution
- - null terminated strings
- - no slice/array reference/pointer + size type
- - ...
+The Niob programming language is a procedural systems programming language for game development.
+Niob is inspired by the languages [Odin](https://odin-lang.org/) and [Jai](https://www.youtube.com/playlist?list=PLmV5I2fxaiCKfxMBrNsU1kgKJXD3PkyxO), as well as Casey
+Muratori's comments on programming languages during his streams of [Handmade Hero](https://handmadehero.org/).
 
-Why I won't use Odin instead (I done AoC, written a 6502 emulator, some board game solvers and a few visualizers in Odin)
- - the type system is annoying
-	(since it has no, or at least few, implicit casts I find myself having to litter "meaningless" casts everywhere, since I cannot communicate the guarantees I have about values, e.g. x is
-     an u8, y is an i8, x is always greater than 0 and less than 255, y is between -1 and 1, x + y does not work, since u8 + i8 is not legal, so I have to do u8(i8(x) + y), eventhough I
-     have asserted that the guarantees hold. Another example of this is how u64 % 8 is always a u64 and cannot be implicitly casted to an u8, eventhough it is impossible for the value
-     to be greater than 254)
- - I hate the new code style errors, since I have much more trouble reading code that is formated in that way (whitespace is immensely important for grouping and distinction)
- - there are also other reasons, but it all boils down to Odin being essentially what I want in a language, but with a whole lot of tedium added
+**NOTE:**
+The reason I, the author of Niob, have started work on my own language, instead of using the
+aforementioned languages is more out of necessity than anything else. Odin and Jai are both
+perfectly viable languages for game development, however I am displeased with a large portion
+of their design and especially the direction they are headed. Since there are no other
+formidable options for my own use, I am left with no other option than to design it myself.
+The language is therefore very opinionated and is __not__ meant to fit into any preexisting
+paradigm or fad. Niob will __never__ support OOP, RAII, "memory safety" or similar concepts.
+Finally, the language aims to serve as a replacement to C that is well defined, low friction,
+and allows arbitrary levels of abstraction.
 
-Main goals of niob
- - minimal amount of undefined behaviour (and undefined behaviour should cause a hard crash on debug builds)
- - a type system that works with the programmer, instead of against them (e.g. won't have the programmer litter meaningless casts everywhere, and implicit casts should not be shocking)
- - easy to parse, while still being easy to write and read (i.e. easy to parse, but not lisp)
- - be minimal and "feel like C"
- - allow compile time execution and metaprogramming
- - allow writing code without worrying about memory usage, and then later bundle allocations, reduce footprint and improve locality without major changes to the code
-   (e.g. provide a dynamic array type and a default allocator which can be overriden)
 
-Upfront decisions
- - declarations follow name before type (name: type)
- - everything is zero initialized by default, with an option to avoid initialization, or initialize with a specific value
- - only declarations are allowed in global scope
- - global declarations are unordered
- - no goto (although this removes a lot of freedom, it also allows the compiler to guarantee a lot more)
+## Goals
+ - no undefined behaviour
+ - minimal and well documented platform dependent behaviour
+ - designed around modern 64bit processors
+ - empower the programmer and stay out of the way
+ - be simple and extensible
 
-Comments:
-// this is a comment
+## Platform Dependent Behaviour
+ - the result and possible exceptions raised from dividing an integer by 0
+ - the result and possible exceptions raised from dividing INT_MIN by -1
+ - exceptions raised by illegal/exceptional floating point operations
+ - whether an exception is raised, or not, when a null pointer is dereferenced
+   (depends on the zero page being reserved, which is the case on all major desktop operating
+    systems, but usually not on embedded systems)
 
-/* this is a block comment /* this is a nested block comment */ */
+## Types
+```
+uint, u8, u16, u32, u64 // unsigned integers
+int,  i8, i16, i32, i64 // signed integers
+bool, b8, b16, b32, b64 // boolean
+float, f32, f64         // floating point
 
-Declarations:
- - there are two main types of declarations: variables and constants. Variables behave like in C, while constants are compile time constants which "do not exist at runtime" (unless they are
-   added to the data segment, which is the case for strings)
- - there are also import and include declarations, include works like #include in C (but it works on the AST, not text) and import is used for libraries
- - "using" declarations are used to import symbols into a scope
+rawptr                  // pure memory address
+typid                   // the type of types
+any                     // typeid + rawptr
+```
 
-// this is a variable declaration with zero initialization
-name : type;
+## Keywords
+```
+do
+in
+proc
+struct
+union
+enum
+where
+if
+when
+else
+while
+for
+break
+continue
+return
+defer
+using
+true
+false
+```
 
-// this is a variable declaration with no initialization
-name : type = ---;
+## Primary expressions
+```
+identifier                           - /(?<!\w)(_|[A-Za-z])\w*/
 
-// this is a variable declaration initialized to the value of an expression
-name : type = expression;
+binary literal                       - /(?<!\w)0b([0-1]_+[0-1]|[0-1])+/
 
-// this is a vartiable delaration initialized to the value of an expression, where the type of variable is infered from the expression
-name : = expression;
+decimal literal                      - /(?<!\w)0d(\d_+\d|\d)+|(0(?!(x|b|h|d))\d+|[1-9]+)(e[+-]?(\d_+\d|\d)+)/
 
-// this is a constant declaration
-name : type : expression;
+hexadecimal literal                  - /(?<!\w)0x([\dA-Fa-f]_+[\dA-Fa-f]|[\dA-Fa-f])+/
 
-// this is a constant declaration with an infered type
-name : : expression;
+hexadecimal floating point literal   - /(?<!\w)0h([\dA-Fa-f]_+[\dA-Fa-f]|[\dA-Fa-f])+/
 
-// constant declarations cannot be zero initialized or uninitialized
+floating point literal               - /(?<!\w)(\d_+\d|\d)*\.(\d_+\d|\d)+(e[+-]?(\d_+\d|\d)+)?/
 
-// both variable and constant declarations support multiple names and values, but not multiple types
+string literal                       - /"((\\.)|[^"])*"/
 
-name0, name1, name2 : type;         // legal var decl, equivalent to name0 : type; name1 : type; name2 : type;
-name0, name1, name2 : type0, type1; // illegal
+character literal                    - '((\\.)|[^'])*'
 
-name0, name1, name2 : type = expression0, expression1, expression2; // legal var decl, equivalent to name0 : type = expression0; name1 : type = expression1; name2 : type = expression2;
-name0, name1, name2 : type : expression0, expression1, expression2; // legal const decl, equivalent to name0 : type : expression0; name1 : type : expression1; name2 : type : expression2;
+boolean literal
+ true
+ false
 
-name0, name1, name2 :  = expression0, expression1, expression2; // legal var decl, equivalent to name0 : = expression0; name1 : = expression1; name2 : = expression2;
-name0, name1, name2 :  : expression0, expression1, expression2; // legal const decl, equivalent to name0 : : expression0; name1 : : expression1; name2 : : expression2;
+struct literal
+ type.{field0 = elem0, elem1, field2 = elem2}
+ .{field0 = elem0, elem1, field2 = elem2}
 
-name0, name1, name2 :  = expression; // legal if expression0 provides 3 values (e.g. procedure with three return values)
-name0, name1, name2 :  : expression; // legal if expression0 provides 3 values (e.g. procedure with three return values)
+array literal
+ type.[range0 = elem0, elem1, elem2, range1 = elem3]
+ .[range0 = elem0, elem1, elem2, range1 = elem3]
 
-// this is an import declaration (the import system will be covered later)
-import "import_path";
-foreign import "import_path";
-include "include_path";
+compound expression
+ (expression)
 
-// this is a using declaration
-using expression; // imports the symbols in expression into the current scope (e.g. using a;      // a.x can now be accessed as x  )
+struct
+ struct { field0: type0; field1, field2: type1; }
+ struct(param0, param1: param_type0, param2: param_type1) { field0: type0; field1, field2: type1; }
 
-// using also works on other declarations
-using name : type;              // equivalent to: name : type; using name;
-using name : type : expression; // equivalent to: name : type : expression; using name;
+enum
+ enum { A, B, C = expression0, D }
+ enum elem_type { A, B, C = expression0, D }
 
-using import "import_path";
-using import "import_path" as expression;
-using foreign import "import_path";
-using foreign import "import_path" as expression;
-//using include "include_path";
-//using include "include_path" as expression;
+procedure
+ proc do body;
+ proc {}
+ proc -> return_type do body;
+ proc -> return_type {}
+ proc -> (return0: return_type0, return1: return_type1) do body;
+ proc ->(return0: return_type0, return1: return_type1) {}
+ proc(param0: type0, param1, param2 := value0, param3: type1) do body;
+ proc(param0: type0, param1, param2 := value0, param3: type1) {}
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type do body;
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type {}
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type where expression do body;
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type where expression {}
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> (return0: return_type0, return1: return_type1) do body;
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> (return0: return_type0, return1: return_type1) {}
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> (return0: return_type0, return1: return_type1) where expression do body;
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> (return0: return_type0, return1: return_type1) where expression {}
 
-Statements:
+procedure type
+ proc
+ proc -> return_type
+ proc -> (return0: return_type0, return1: return_type1)
+ proc(param0: type0, param1, param2 := value0, param3: type1)
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> return_type
+ proc(param0: type0, param1, param2 := value0, param3: type1) -> (return0: return_type0, return1: return_type1)
+```
 
-// this is an if statement
-if condition {}
+## Operators (grouped by precedence high - low)
+```
+// postfix unary
+ [y]    array subscript        arrays, slices, dynamic arrays
+ [y:z]  array slice            arrays, slices, dynamic arrays
+ (y, z) procedure call         procedure pointer
+ .y     element accessor       struct, union, enum, arrays
+ ++     post increment         integers
+ --     post decrement         integers
+
+// prefix unary
+ +    plus                     integers, floating point, arrays
+ ++   increment                integers
+ -    negation                 integers, floating point, arrays
+ --   decrement                integers
+ *    dereference              pointers
+ &    reference                addressable value
+ ~    bitwise not              integers
+ !    logial not               boolean
+ ^    pointer type             typeid
+ []   slice type               typeid
+ [x]  array type               typeid
+ [..] dynamic array type       typeid
+ $    polymorphic type         symbol
+ ..   spread                   arrays
+
+// binary
+ ..  closed range              integers
+ ..< half open range           integers
+
+// binary
+ *     product (binary)        integers, floating point, arrays
+ /     quotient                integers, floating point
+ /     type slice              typeid
+ %     trunc. div. modulo      integers
+ %%    floor. div. modulo      integers
+ &     bitwise and (binary)    integers
+ <<    logical left shift      integers
+ >>    logical right shift     integers
+ >>>   arithmetic right shift  integers
+ ident infix procedure call    all types
+
+ + sum  (binary)               integers, floating point, arrays
+ - difference (binary)         integers, floating point, arrays
+ | bitwise or                  integers
+ ^ bitwise xor                 integers
+
+ == compare equal              integers, floating point, arrays, boolean, pointers
+ != compare inequal            integers, floating point, arrays, boolean, pointers
+ <  compare less               integers, floating point, arrays, boolean, pointers
+ <= compare less or equal      integers, floating point, arrays, boolean, pointers
+ >  compare greater            integers, floating point, arrays, boolean, pointers
+ >= compare greater or equal   integers, floating point, arrays, boolean, pointers
+
+ && logical and                boolean
+
+ || logical or                 boolean
+```
+
+## Statements
+block
+```
+{ statements; }
+do statement; // only allowed as body of if, when, for, procedures
+
+// optional label before statement
+label: { statements; }
+```
+
+if/when
+```
+// runtime if
 if condition do statement;
-
-// also supports an optional init clause (e.g. works like { init; if (condition) {} } in C)
-if init; condition {}
-if init; condition do statement;
-
-// with a following else statement
 if condition {}
-else if condition do statement;
-else do statement;
 
-if condition do statement;
-else if condition {}
-else {};
-
-// this is a when statement (like a #if statement in C, but part of the language. Only one of the branches are type checked, the others are discarded)
-when condition do {}
+// compile time if (does not type check false branch)
 when condition do statement;
-
-// mirrors if statement
-when init; condition do {}
-when init; condition do statement;
-
 when condition {}
-else when condition do statement;
-else do statement;
 
-when condition do statement;
-else when condition {}
-else {};
+// can be followed by an else clause
+if condition do statement;
+else         do statement;
 
-// PS: mixing if and when is not allowed, i.e. the following is illegal
-if condition {}
-else when condition {}
+// optional label before statement, and init statement (can be an expression, assignment or declaration)
+label: if init; condition do statement;
+```
 
+while
+```
+while condition do statement;
+while condition {}
 
-// this is a while statement (equivalent to for loop in C)
-while init; condition; post {}
-while init; condition; post do statement;
+// optional label before statement, and init, step statements
+// init can be an expression, assignment or declaration, is executed before the loop
+// step can be an expression or assignment, is executed after every iteration
+label: while init; condition; step do statement;
+```
 
-// init and post are optional
-while condition {}                  // legal
-while condition do statement;       // legal
-while init; condition {}            // legal
-while init; condition do statement; // legal
-while condition; post {}            // illegal
-while condition; post do statement; // illegal
+for
+```
+for symbol in collection do statement;
+for symbol in collection {}
 
-// break and continue accept labels
+// may in some cases allow several symbols
+for symbol0, symbol1, symbol2 in collection do statement;
+
+// optional label before statement
+label: for symbol in collection do statement;
+```
+
+break/continue
+```
 break;
-break label;
 continue;
+
+// labeled break/continue
+break label;
 continue label;
+```
 
-// labels are placed before if, while and blocks
-label: if condition do statement;
-label: while condition do statement;
-label: {}
+using
+```
+using symbol;
+```
 
-// break label; can be used in if statements and blocks with no surrounding while loop to break out of the target scope
+defer
+```
+defer statement;
+defer {}
+```
 
-// return supports no values, multiple values, and named values
+return
+```
 return;
 return expression;
 return expression0, expression1;
-return name = expression;
-return name0 = expression0, name1 = expression1;
+return symbol = expression;
+return symbol0 = expression0, symbol1 = expression1;
+return expression0, symbol1 = expression1;
+```
 
-// cleanup with goto is replaced with defer
-defer statement;
-defer {}
+assignment
+```
+x = y;
+x, y = y, x;
 
-Expressions:
+// assigment may use any binary operator (except element accessor, infix call, type slice and comparison operators)
+x op= y; // e.g. x += y;
+```
 
-operators (all binary operators are left-associative):
-7.  slice[:], subscript[], call(), .
-6.  +, -, &, *, ~, !, ., ^, [], [N], [..]
-5.  *, /, %, &, >>, <<, infix call, ->
-4.  +, -, |, ^
-3.  ==, !=, <=, >=, <, >
-2.  &&,
-1.  ||,
-//  ?:
+## Import system
+The point of an import system is to create a standard way of encapsulating code. The import system achieves this by defining
+the concept of an abstract unit of code (e.g. a bundle of source files, or maybe a subset of a single file), and defines rules
+for how these units may interact and the information they either show or hide from other units. Ideally one would be able to
+define rules for interaction between units on a per pair basis. This would enable granular control over how information is
+shared between units. The problem with this approach is that it the complexity may quickly spiral out of control if the
+sharing rules are not carefully monitored. This complexity may be warranted, but it can easily creep into the codebase itself.
+This may not be objectively true, but in my opinion, the rules for how the systems, contained in these units of code, interact
+is way more important than how the codebase is structured. Giving up control over information sharing rules and adopting a
+single standard ruleset for sharing units of code would reduce the complexity imposed by the organization of the codebase.
+This would in turn highlight complexities in these systems, since the ambient complexity is reduced.
+In the case of defining the "unit of code" the import system governs, there aleady exists two units in all operating systems:
+the file and the directory. These units serve to encapsulate data, and may in some cases define rules regarding access rights.
+Separating a codebase across different files and directories serves to limit the information displayed to the programmer and
+organize it such that information about related subjects are located close to eachother. Files and directories used in this
+way can aid the programmer by reducing noise and allowing easy access to relevant information. The problem with files and
+directories is that, by themselves, they do not define any rules that govern the visibility of information to code. To remedy
+this, a usual approach is to define an abstract unit that is based on either files or directories, and provides additional
+rules. This unit will be refered to as a "package". Python is an example of a language that bases packages of files, while Odin
+bases packages of directories. An important observation is that basing the package of files removes to ability to segregate the
+package into several focused views, unless not every file is a package, which allows segregation but increases complexity. Basing
+the package of a directory allows segeregation into files, but introduces some problems regarding the possibility of subdirectories
+and which subset of files in the directory should be part of the package. Despite the problems with basing the package of the
+directory, it allows a greater degree of freedom, and the problems should be solvable. Regarding subdirectories, if the package
+is defined to contain every file in a directory (recursively), it would be impossible to define a master and sub-package
+relationship, which is useful when making larger libraries with clearly defined modules. Additionally, if subdirectories are treated
+as sub-packages, it would be impossible to distinguish between a package and sub-package, which could cause addressing problems.
+Regarding the subset of files treated as part of the language, the extension could be used to distinguish between source files and
+other files, however this is not necessarily portable, since not all operating systems rely on file extensions (and adding them
+would then seem alien). Since subdirectories are ignored, it would make sense to treat every file in a directory as part of that
+package, and requiring other files to be located in subdirectories. The definition of what is contained in a package is therefore
+every file which is an immediate child of the package's directory. Now onto the ruleset governing packages. For packages to be
+useful they need to define rules regarding visibility, addressing and how this affects the ABI. Visibility is reasonably simple,
+since it essentially comes down to segregating the package into a public and private segment. However, there are several ways of
+segregating the package. One way is to divide the entire content of the package into two segments, public and private. Another
+option is to divide the package into three segments: public, private and file private. This would allow files to hide information
+from other parts of the package, as well as other packages. However, introducing the notion of file private information would
+essentially elevate files to package status, and could easily be emulated by defining sub-packages. Regarding addressing, by
+assigning each package a unique name, the contents of the package could be addressed in the same manner as members of structures
+are accessed.And when it comes to linking names, by prefixing each symbol with the package name, it would eliminate all symbol
+collisions, as long as every package name is unique. A natural way sepcifying the package name is by naming the directory, however
+this wouls allow package names which are not identifiers. To remedy this and make it clearer which files are included in the package,
+each file should start with declaring which package they are part of. The last step is to define how dependencies work. There are two
+options: allow passing on dependencies, and keep all dendencies private. Since packages are supposed to be encapsulated units of code,
+it would make more sense for dependencies to be private, since this restricts the set of visible packages to those imported in a
+package's source code.
 
-primary expressions:
-  idenfifier
-  number
-  string
-  struct literal
-  array literal
- 
-
-@notes:
- - before declaration statements and scopes, and after fields and parameters
-
-@note name : type;
-
-@note {}
-
-if condition @note {}
-
-struct { field_name: type @note }
-
-proc(parameter_name: type @note)
-
-Metaprogramming:
- - provide language constructs for all local tasks
- - allow modification of the compiler
- - compiler is a library
-
-common use cases:
- - generate code from existing code
- - insert code into existing code
- - check code for compliance to a ruleset
-
-Types:
-
-uint(u64), u8, u16, u32, u64
-int(i64), i8, i16, i32, i64
-bool(b1), b8, b16, b32, b64
-f16, f32, f64
-
-u8-64 implicitly casts to uint
-u8-32 implicitly casts to int
-i8-64 implicitly casts to int
-b8-64 do not implicitly cast to bool
-
-struct and array literals vs. blocks and subscripts
+## Shared Libraries
+Type information is lost (maybe pass type table via context?)
