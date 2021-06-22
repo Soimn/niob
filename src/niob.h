@@ -59,8 +59,17 @@ typedef struct String
     umm size;
 } String;
 
-typedef u64 Identifier;
+typedef u32 Identifier;
 typedef u32 Character;
+
+#define IDENTIFIER_TABLE_BLOCK_SIZE 2048
+
+typedef struct Memory_Arena
+{
+    struct Memory_Block* first;
+    struct Memory_Block* current;
+    u32 block_size;
+} Memory_Arena;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -76,10 +85,22 @@ enum EXPRESSION_KIND
     Expr_Boolean,
     Expr_StructLiteral,
     Expr_ArrayLiteral,
-    Expr_Compound,
+    Expr_Proc,
+    Expr_Struct,
+    Expr_Union,
+    Expr_Enum,
     
     // precedence 1: 13 - 25
-    Expr_FirstPostfixLevel = 13,
+    Expr_FirstTypeLevel = 13,
+    Expr_PointerType,
+    Expr_SliceType,
+    Expr_ArrayType,
+    Expr_DynamicArrayType,
+    Expr_PolymorphicType,
+    Expr_LastTypeLevel = Expr_PolymorphicType,
+    
+    // precedence 2: 26 - 38
+    Expr_FirstPostfixLevel = 26,
     Expr_Subscript = Expr_FirstPostfixLevel,
     Expr_Slice,
     Expr_Call,
@@ -88,8 +109,8 @@ enum EXPRESSION_KIND
     Expr_PostDecrement,
     Expr_LastPostfixLevel = Expr_PostDecrement,
     
-    // precedence 2: 26 - 38
-    Expr_FirstPrefixLevel = 26,
+    // precedence 3: 39 - 51
+    Expr_FirstPrefixLevel = 39,
     Expr_Negation = Expr_FirstPrefixLevel,
     Expr_Complement,
     Expr_Not,
@@ -97,22 +118,17 @@ enum EXPRESSION_KIND
     Expr_PreDecrement,
     Expr_Reference,
     Expr_Dereference,
-    Expr_PointerType,
-    Expr_SliceType,
-    Expr_ArrayType,
-    Expr_DynamicArrayType,
-    Expr_PolymorphicType,
     Expr_Spread,
     Expr_LastPrefixLevel = Expr_Spread,
     
-    // precedence 3: 39 - 51
-    Expr_FirstRangeLevel = 39,
+    // precedence 4: 52 - 64
+    Expr_FirstRangeLevel = 52,
     Expr_ClosedRange = Expr_FirstRangeLevel,
     Expr_HalfOpenRange,
     Expr_LastRangeLevel = Expr_HalfOpenRange,
     
-    // precedence 4: 52 - 64
-    Expr_FirstMulLevel = 52,
+    // precedence 5: 65 - 77
+    Expr_FirstMulLevel = 65,
     Expr_Mul = Expr_FirstMulLevel,
     Expr_Div,
     Expr_Rem,
@@ -124,16 +140,16 @@ enum EXPRESSION_KIND
     Expr_InfixCall,
     Expr_LastMulLevel = Expr_InfixCall,
     
-    // precedence 5: 65 - 77
-    Expr_FirstAddLevel = 65,
+    // precedence 6: 78 - 90
+    Expr_FirstAddLevel = 78,
     Expr_Add = Expr_FirstAddLevel,
     Expr_Sub,
     Expr_BitwiseOr,
     Expr_BitwiseXor,
     Expr_LastAddLevel = Expr_BitwiseOr,
     
-    // precedence 6: 78 - 90
-    Expr_FirstComparative = 78,
+    // precedence 7: 91 - 103
+    Expr_FirstComparative = 91,
     Expr_IsEqual = Expr_FirstComparative,
     Expr_IsNotEqual,
     Expr_IsStrictlyLess,
@@ -142,17 +158,36 @@ enum EXPRESSION_KIND
     Expr_IsGreater,
     Expr_LastComparative = Expr_IsGreater,
     
-    // precedence 7: 91 - 103
-    Expr_And = 91,
-    
     // precedence 8: 104 - 116
-    Expr_Or = 104,
+    Expr_And = 104,
+    
+    // precedence 9: 117 - 129
+    Expr_Or = 117,
+    
+    Expr_ArgumentAssignment,
 };
 
 typedef struct Expression
 {
+    struct Expression* next;
     Enum8(EXPRESSION_KIND) kind;
 } Expression;
+
+typedef struct Named_Argument
+{
+    Expression* next;
+    Expression* name;
+    Expression* value;
+} Named_Argument;
+
+typedef struct Parameter
+{
+    Expression* next;
+    Expression* names;
+    Expression* type;
+    Expression* values;
+    bool is_using;
+} Parameter;
 
 typedef struct Unary_Expression
 {
@@ -168,15 +203,6 @@ typedef struct Binary_Expression
     Expression* left;
     Expression* right;
 } Binary_Expression;
-
-typedef struct InfixCall_Expression
-{
-    struct Expression;
-    
-    Identifier procedure;
-    Expression* left;
-    Expression* right;
-} InfixCall_Expression;
 
 typedef struct ArrayType_Expression
 {
@@ -208,8 +234,16 @@ typedef struct Call_Expression
     struct Expression;
     
     Expression* pointer;
-    // arguments
+    Named_Argument* arguments;
 } Call_Expression;
+
+typedef struct ElementOf_Expression
+{
+    struct Expression;
+    
+    Expression* left;
+    Identifier right;
+} ElementOf_Expression;
 
 typedef union BasicLiteral_Expression
 {
@@ -227,7 +261,7 @@ typedef struct StructLiteral_Expression
     struct Expression;
     
     Expression* type;
-    // arugments
+    Named_Argument* arguments;
     
 } StructLiteral_Expression;
 
@@ -236,8 +270,41 @@ typedef struct ArrayLiteral_Expression
     struct Expression;
     
     Expression* type;
-    // arguments
+    Named_Argument* arguments;
 } ArrayLiteral_Expression;
+
+typedef struct Proc_Expression
+{
+    struct Expression;
+    
+    Parameter* parameters;
+    Parameter* return_values;
+    struct Statement* body;
+} Proc_Expression;
+
+typedef struct Struct_Expression
+{
+    struct Expression;
+    
+    Parameter* parameters;
+    // members
+} Struct_Expression;
+
+typedef struct Union_Expression
+{
+    struct Expression;
+    
+    Parameter* parameters;
+    // members
+} Union_Expression;
+
+typedef struct Enum_Expression
+{
+    struct Expression;
+    
+    Expression* elem_type;
+    // members
+} Enum_Expression;
 
 enum STATEMENT_KIND
 {
@@ -254,24 +321,35 @@ typedef struct Statement
     Enum8(STATEMENT_KIND) kind;
 } Statement;
 
+enum DECLARATION_KIND
+{
+    Decl_Import,
+    Decl_Variable,
+    Decl_Constant,
+    Decl_Proc,
+    Decl_Struct,
+    Decl_Union,
+    Decl_Enum,
+};
+
+typedef struct Declaration
+{
+    Enum8(DECLARATION_KIND) kind;
+} Declaration;
+
 ///////////////////////////////////////////////////////////////////////////////
 
 typedef struct Workspace
 {
     // resources
     
-    // hash table of identifiers
+    Memory_Arena identifier_table;
     
     // unchecked declarations
     // committed declarations
     
     // error buffer
 } Workspace;
-
-typedef struct Declaration
-{
-    
-} Declaration;
 
 Workspace* WS_Open(void);
 void WS_Close(Workspace* workspace);
@@ -285,5 +363,6 @@ void WS_CommitDeclaration(Workspace* workspace, Declaration declaration);
 void WS_GenerateCode(Workspace* workspace);
 
 void WS_FlushErrorBuffer(Workspace* workspace);
+Identifier WS_GetIdentifier(Workspace* workspace, String string);
 
 #endif

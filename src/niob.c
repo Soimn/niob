@@ -33,7 +33,99 @@
 
 #include <wmmintrin.h>
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include "windows.h"
+#undef far
+#undef near
+
+void*
+System_AllocateMemory(umm size)
+{
+    // TODO: handle running out of memory
+    return VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
+void
+System_FreeMemory(void* ptr)
+{
+    VirtualFree(ptr, 0, MEM_RELEASE);
+}
+
+#elif __linux__
+
+NOT_IMPLEMENTED;
+
+#endif
+
 #include "memory.h"
 
 #include "lexer.h"
 #include "parser.h"
+
+Workspace*
+WS_Open()
+{
+    Workspace* workspace = 0;
+    
+    NOT_IMPLEMENTED;
+    
+    return workspace;
+}
+
+void
+WS_Close(Workspace* workspace)
+{
+    NOT_IMPLEMENTED;
+}
+
+void
+WS_AddFile(Workspace* workspace, String file_path)
+{
+    NOT_IMPLEMENTED;
+}
+
+bool
+WS_RequestDeclaration(Workspace* workspace, Declaration* declaration)
+{
+    bool declarations_left = false;
+    
+    NOT_IMPLEMENTED;
+    
+    return declarations_left;
+}
+
+void
+WS_ResubmitDeclaration(Workspace* workspace, Declaration declaration)
+{
+    NOT_IMPLEMENTED;
+}
+
+void
+WS_CommitDeclaration(Workspace* workspace, Declaration declaration)
+{
+    NOT_IMPLEMENTED;
+}
+
+void
+WS_GenerateCode(Workspace* workspace)
+{
+    NOT_IMPLEMENTED;
+}
+
+void
+WS_FlushErrorBuffer(Workspace* workspace)
+{
+    NOT_IMPLEMENTED;
+}
+
+Identifier
+WS_GetIdentifier(Workspace* workspace, String string)
+{
+    Identifier result = 0;
+    
+    NOT_IMPLEMENTED;
+    
+    return result;
+}

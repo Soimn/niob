@@ -41,12 +41,12 @@ enum TOKEN_KIND
     Token_LeftShiftEquals,                      // <<=
     Token_LastAssignment = Token_LeftShiftEquals,
     
-    Token_FirstRangeLevel = 39,
+    Token_FirstRangeLevel = 52,
     Token_Elipsis = Token_FirstRangeLevel,      // ..
     Token_ElipsisLess,                          // ..<
     Token_LastRangeLevel = Token_ElipsisLess,
     
-    Token_FirstMulLevel = 52,
+    Token_FirstMulLevel = 65,
     Token_Star = Token_FirstMulLevel,           // *
     Token_Slash,                                // /
     Token_Rem,                                  // %
@@ -57,14 +57,14 @@ enum TOKEN_KIND
     Token_LeftShift,                            // <<
     Token_LastMulLevel = Token_LeftShift,
     
-    Token_FirstAddLevel = 65,
+    Token_FirstAddLevel = 78,
     Token_Plus = Token_FirstAddLevel,           // +
     Token_Minus,                                // -
     Token_Or,                                   // |
     Token_Hat,                                  // ^
     Token_LastAddLevel = Token_Hat,
     
-    Token_FirstComparative = 78,
+    Token_FirstComparative = 91,
     Token_EqualEquals = Token_FirstComparative, // ==
     Token_NotEquals,                            // !=
     Token_Less,                                 // <
@@ -73,9 +73,9 @@ enum TOKEN_KIND
     Token_GreaterEquals,                        // >=
     Token_LastComparative = Token_GreaterEquals,
     
-    Token_AndAnd = 91,                          // &&
+    Token_AndAnd = 104,                         // &&
     
-    Token_OrOr = 104,                           // ||
+    Token_OrOr = 117,                           // ||
     
     Token_Identifier,
     Token_String,
@@ -125,9 +125,11 @@ typedef struct Token
     {
         struct
         {
-            String string;
+            Identifier identifier;
             Enum8(KEYWORD_KIND) keyword;
         };
+        
+        String string;
         
         u32 character;
     };
@@ -139,6 +141,8 @@ typedef struct Token
 #define LEXER_TOKEN_WINDOW_SIZE 3
 typedef struct Lexer
 {
+    Workspace* workspace;
+    
     String string;
     u8 at[2];
     
@@ -148,6 +152,8 @@ typedef struct Lexer
     
     umm token_window_index;
     Token buffer[MAX(LEXER_TOKEN_WINDOW_SIZE, LEXER_TOKEN_BUFFER_SIZE)];
+    
+    Identifier keywords[KEYWORD_COUNT];
 } Lexer;
 
 // TODO: Error reporting and string allocation
@@ -537,8 +543,10 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                     {
                         token->kind = Token_Identifier;
                         
-                        token->string.data = &lexer->string.data[lexer->offset - 1];
-                        token->string.size = 1;
+                        String ident = {
+                            .data = &lexer->string.data[lexer->offset - 1],
+                            .size = 1
+                        };
                         
                         while (lexer->at[0] == '_'                        ||
                                lexer->at[0] >= 'a' && lexer->at[0] <= 'z' ||
@@ -546,9 +554,20 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                                lexer->at[0] >= '0' && lexer->at[0] <= '9')
                         {
                             Lexer_AdvanceCursor(lexer);
+                            ++ident.size;
                         }
                         
-                        NOT_IMPLEMENTED; // keywords
+                        token->identifier = WS_GetIdentifier(lexer->workspace, ident);
+                        
+                        token->keyword = Keyword_Invalid;
+                        for (umm j = 1; j < KEYWORD_COUNT; ++j)
+                        {
+                            if (token->identifier == lexer->keywords[j])
+                            {
+                                token->keyword = (u8)j;
+                                break;
+                            }
+                        }
                     }
                 }
                 
@@ -575,11 +594,33 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
 }
 
 Lexer
-Lexer_Init(String string)
+Lexer_Init(Workspace* workspace, String string)
 {
     Lexer lexer = {0};
-    lexer.string = string;
-    lexer.line   = 1;
+    lexer.workspace = workspace;
+    lexer.string    = string;
+    lexer.line      = 1;
+    
+    lexer.keywords[Keyword_Invalid]  = 0;
+    lexer.keywords[Keyword_Do]       = WS_GetIdentifier(workspace, STR("do"));
+    lexer.keywords[Keyword_In]       = WS_GetIdentifier(workspace, STR("in"));
+    lexer.keywords[Keyword_Where]    = WS_GetIdentifier(workspace, STR("where"));
+    lexer.keywords[Keyword_Proc]     = WS_GetIdentifier(workspace, STR("proc"));
+    lexer.keywords[Keyword_Struct]   = WS_GetIdentifier(workspace, STR("struct"));
+    lexer.keywords[Keyword_Union]    = WS_GetIdentifier(workspace, STR("union"));
+    lexer.keywords[Keyword_Enum]     = WS_GetIdentifier(workspace, STR("enum"));
+    lexer.keywords[Keyword_If]       = WS_GetIdentifier(workspace, STR("if"));
+    lexer.keywords[Keyword_Else]     = WS_GetIdentifier(workspace, STR("else"));
+    lexer.keywords[Keyword_When]     = WS_GetIdentifier(workspace, STR("when"));
+    lexer.keywords[Keyword_While]    = WS_GetIdentifier(workspace, STR("while"));
+    lexer.keywords[Keyword_For]      = WS_GetIdentifier(workspace, STR("for"));
+    lexer.keywords[Keyword_Break]    = WS_GetIdentifier(workspace, STR("break"));
+    lexer.keywords[Keyword_Continue] = WS_GetIdentifier(workspace, STR("continue"));
+    lexer.keywords[Keyword_Using]    = WS_GetIdentifier(workspace, STR("using"));
+    lexer.keywords[Keyword_Defer]    = WS_GetIdentifier(workspace, STR("defer"));
+    lexer.keywords[Keyword_Return]   = WS_GetIdentifier(workspace, STR("return"));
+    lexer.keywords[Keyword_True]     = WS_GetIdentifier(workspace, STR("true"));
+    lexer.keywords[Keyword_False]    = WS_GetIdentifier(workspace, STR("false"));
     
     Lexer_EatTextAndFillBuffer(&lexer, 0);
     
