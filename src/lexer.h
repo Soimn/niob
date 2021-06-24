@@ -80,7 +80,8 @@ enum TOKEN_KIND
     Token_Identifier,
     Token_String,
     Token_Character,
-    //Token_Number // TODO: Consider BigNum
+    Token_Int,
+    Token_Float,
     
     Token_EndOfStream,
     
@@ -132,6 +133,10 @@ typedef struct Token
         String string;
         
         u32 character;
+        
+        u64 integer;
+        
+        f64 floating;
     };
     
     Enum8(TOKEN_KIND) kind;
@@ -578,7 +583,173 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                 
                 else if (c == '\'' || c == '"')
                 {
-                    NOT_IMPLEMENTED;
+                    String raw_string = {
+                        .data = &lexer->string.data[lexer->offset],
+                        .size = 0,
+                    };
+                    
+                    while (lexer->at[0] != 0 && lexer->at[0] != c)
+                    {
+                        if (lexer->at[0] == '\\') Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(lexer);
+                    }
+                    
+                    if (lexer->at[0] == 0)
+                    {
+                        //// ERROR: Unterminated string/character literal
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        raw_string.size = &lexer->string.data[lexer->offset] - raw_string.data;
+                        Lexer_AdvanceCursor(lexer);
+                        
+                        // HACK
+                        Memory_Arena tmp_arena = {0};
+                        String string = {
+                            .data = Arena_PushSize(&tmp_arena, raw_string.size, 1),
+                            .size = 0
+                        };
+                        
+                        for (umm j = 0; j < raw_string.size && !encountered_errors; ++j)
+                        {
+                            if (raw_string.data[j] == '\\')
+                            {
+                                j += 1;
+                                
+                                if (raw_string.data[j] == 'u' || raw_string.data[j] == 'x')
+                                {
+                                    umm req_digit_count = (raw_string.data[j] == 'u' ? 6 : 2);
+                                    
+                                    umm codepoint = 0;
+                                    
+                                    for (umm digit_count = 0; digit_count < req_digit_count; ++digit_count, ++j)
+                                    {
+                                        if (raw_string.data[j + 1] >= '0' && raw_string.data[j + 1] <= '9')
+                                        {
+                                            codepoint *= 16;
+                                            codepoint += raw_string.data[j + 1] - '0';
+                                        }
+                                        
+                                        else if (raw_string.data[j + 1] >= 'a' && raw_string.data[j + 1] <= 'f')
+                                        {
+                                            codepoint *= 16;
+                                            codepoint += (raw_string.data[j + 1] - 'a') + 10;
+                                        }
+                                        
+                                        else if (raw_string.data[j + 1] >= 'A' && raw_string.data[j + 1] <= 'F')
+                                        {
+                                            codepoint *= 16;
+                                            codepoint += (raw_string.data[j + 1] - 'A') + 10;
+                                        }
+                                        
+                                        else
+                                        {
+                                            //// ERROR: missing digits in codepoint/byte escape sequence
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                    
+                                    if (!encountered_errors)
+                                    {
+                                        if (codepoint <= 0x7F)
+                                        {
+                                            string.data[string.size++] = (u8)codepoint;
+                                        }
+                                        
+                                        else if (codepoint <= 0x7FF)
+                                        {
+                                            string.data[string.size++] = 0xC0 | (u8)((codepoint & 0x7C0) >> 6);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x03F) >> 0);
+                                        }
+                                        
+                                        else if (codepoint <= 0xFFFF)
+                                        {
+                                            string.data[string.size++] = 0xE0 | (u8)((codepoint & 0xF000) >> 12);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x0FC0) >> 6);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x003F) >> 0);
+                                        }
+                                        
+                                        else if (codepoint <= 0x10FFFF)
+                                        {
+                                            string.data[string.size++] = 0xF0 | (u8)((codepoint & 0x1C0000) >> 18);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x03F000) >> 12);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x000FC0) >> 6);
+                                            string.data[string.size++] = 0x80 | (u8)((codepoint & 0x00003F) >> 0);
+                                        }
+                                        
+                                        else
+                                        {
+                                            //// ERROR: Unicode codepoint out of UTF-8 range
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                }
+                                
+                                else
+                                {
+                                    switch (raw_string.data[j])
+                                    {
+                                        case '\"': string.data[string.size++] = '\"'; break;
+                                        case '\'': string.data[string.size++] = '\''; break;
+                                        case '\\': string.data[string.size++] = '\\'; break;
+                                        
+                                        case 'a': string.data[string.size++] = '\a'; break;
+                                        case 'b': string.data[string.size++] = '\b'; break;
+                                        case 'f': string.data[string.size++] = '\f'; break;
+                                        case 'n': string.data[string.size++] = '\n'; break;
+                                        case 'r': string.data[string.size++] = '\r'; break;
+                                        case 't': string.data[string.size++] = '\t'; break;
+                                        case 'v': string.data[string.size++] = '\v'; break;
+                                        
+                                        default:
+                                        {
+                                            //// ERROR: Unknown escape sequence
+                                            encountered_errors = true;
+                                        } break;
+                                    }
+                                }
+                            }
+                            
+                            else string.data[string.size++] = raw_string.data[j];
+                        }
+                        
+                        if (!encountered_errors)
+                        {
+                            if (c == '"')
+                            {
+                                token->kind   = Token_String;
+                                token->string = string;
+                            }
+                            
+                            else
+                            {
+                                token->kind = Token_Character;
+                                
+                                if (string.size == 0)
+                                {
+                                    //// ERROR: Empty character literal
+                                    encountered_errors = true;
+                                }
+                                
+                                else if ((string.data[0] & 0xF0) == 0 && string.size != 1 ||
+                                         (string.data[0] & 0xF0) == 0 && string.size != 2 ||
+                                         (string.data[0] & 0xF0) == 0 && string.size != 3 ||
+                                         (string.data[0] & 0xF0) == 0 && string.size != 4)
+                                {
+                                    //// ERROR: Character literals may only contain one character
+                                    encountered_errors = true;
+                                }
+                                
+                                else
+                                {
+                                    token->character = 0;
+                                    Copy(string.data, &token->character, string.size);
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 else

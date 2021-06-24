@@ -81,7 +81,8 @@ enum EXPRESSION_KIND
     Expr_Identifier,
     Expr_String,
     Expr_Char,
-    //Expr_Number
+    Expr_Int,
+    Expr_Float,
     Expr_Boolean,
     Expr_StructLiteral,
     Expr_ArrayLiteral,
@@ -163,8 +164,6 @@ enum EXPRESSION_KIND
     
     // precedence 9: 117 - 129
     Expr_Or = 117,
-    
-    Expr_ArgumentAssignment,
 };
 
 typedef struct Expression
@@ -173,21 +172,45 @@ typedef struct Expression
     Enum8(EXPRESSION_KIND) kind;
 } Expression;
 
-typedef struct Named_Argument
+typedef struct Argument
 {
-    Expression* next;
-    Expression* name;
-    Expression* value;
-} Named_Argument;
+    struct Argument* next;
+	Expression* name;
+	Expression* value;
+} Argument;
 
 typedef struct Parameter
 {
-    Expression* next;
-    Expression* names;
-    Expression* type;
-    Expression* values;
-    bool is_using;
+	struct Parameter* next;
+	Expression* names;
+	Expression* type;
+	Expression* value;
+	bool is_using;
 } Parameter;
+
+typedef struct Return_Value
+{
+	struct Return_Value* next;
+	Expression* names;
+	Expression* type;
+} Return_Value;
+
+typedef struct Struct_Member
+{
+	struct Struct_Member* next;
+	Expression* type;
+	Identifier name;
+	bool is_using;
+} Struct_Member;
+
+typedef struct Enum_Member
+{
+	struct Enum_Member* next;
+	Identifier name;
+	Expression* value;
+} Enum_Member;
+
+/////////////////////////////////
 
 typedef struct Unary_Expression
 {
@@ -234,7 +257,7 @@ typedef struct Call_Expression
     struct Expression;
     
     Expression* pointer;
-    Named_Argument* arguments;
+    Argument* arguments;
 } Call_Expression;
 
 typedef struct ElementOf_Expression
@@ -253,7 +276,8 @@ typedef union BasicLiteral_Expression
     String string;
     Character character;
     bool boolean;
-    // number
+    u64 integer;
+    f64 floating;
 } BasicLiteral_Expression;
 
 typedef struct StructLiteral_Expression
@@ -261,7 +285,7 @@ typedef struct StructLiteral_Expression
     struct Expression;
     
     Expression* type;
-    Named_Argument* arguments;
+    Argument* arguments;
     
 } StructLiteral_Expression;
 
@@ -270,7 +294,7 @@ typedef struct ArrayLiteral_Expression
     struct Expression;
     
     Expression* type;
-    Named_Argument* arguments;
+    Argument* arguments;
 } ArrayLiteral_Expression;
 
 typedef struct Proc_Expression
@@ -278,8 +302,10 @@ typedef struct Proc_Expression
     struct Expression;
     
     Parameter* parameters;
-    Parameter* return_values;
+    Return_Value* return_values;
+    Expression* polymorph_condition;
     struct Statement* body;
+    bool is_decl;
 } Proc_Expression;
 
 typedef struct Struct_Expression
@@ -287,23 +313,16 @@ typedef struct Struct_Expression
     struct Expression;
     
     Parameter* parameters;
-    // members
+    Expression* polymorph_condition;
+    Struct_Member* members;
 } Struct_Expression;
-
-typedef struct Union_Expression
-{
-    struct Expression;
-    
-    Parameter* parameters;
-    // members
-} Union_Expression;
 
 typedef struct Enum_Expression
 {
     struct Expression;
     
     Expression* elem_type;
-    // members
+    Enum_Member* members;
 } Enum_Expression;
 
 enum STATEMENT_KIND

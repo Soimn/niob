@@ -1,6 +1,7 @@
 typedef struct Parser_State
 {
     Lexer* lexer;
+    Memory_Arena* arena;
 } Parser_State;
 
 Token
@@ -40,7 +41,7 @@ PushExpression(Parser_State state, Enum8(EXPRESSION_KIND) kind)
 bool ParseExpression(Parser_State state, Expression** expression);
 
 bool
-ParseArgumentList(Parser_State state, Named_Argument** arguments)
+ParseArgumentList(Parser_State state, Argument** arguments)
 {
     bool encountered_errors = false;
     
@@ -54,7 +55,30 @@ ParseParameterList(Parser_State state, Parameter** parameters)
 {
     bool encountered_errors = false;
     
-    NOT_IMPLEMENTED;
+    Token token = GetToken(state);
+    
+    if (token.kind == Token_OpenParen)
+    {
+        SkipPastCurrentToken(state);
+        token = GetToken(state);
+        
+        if (token.kind != Token_CloseParen)
+        {
+            NOT_IMPLEMENTED;
+        }
+        
+        if (!encountered_errors)
+        {
+            token = GetToken(state);
+            
+            if (token.kind == Token_CloseParen) SkipPastCurrentToken(state);
+            else
+            {
+                //// ERROR: Missing closing parenthesis after parameter list
+                encountered_errors = true;
+            }
+        }
+    }
     
     return !encountered_errors;
 }
@@ -81,11 +105,23 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
         
         SkipPastCurrentToken(state);
     }
-    /*
-    else if (token.kind == Token_Number)
+    
+    else if (token.kind == Token_Int)
     {
+        *expression = PushExpression(state, Expr_Int);
+        ((BasicLiteral_Expression*)*expression)->integer = token.integer;
+        
+        SkipPastCurrentToken(state);
     }
-    */
+    
+    else if (token.kind == Token_Float)
+    {
+        *expression = PushExpression(state, Expr_Float);
+        ((BasicLiteral_Expression*)*expression)->floating = token.floating;
+        
+        SkipPastCurrentToken(state);
+    }
+    
     else if (token.kind == Token_Identifier)
     {
         if (token.keyword == Keyword_Invalid)
@@ -106,22 +142,336 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
         
         else if (token.keyword == Keyword_Proc)
         {
-            NOT_IMPLEMENTED;
+            Proc_Expression* proc_expr = PushExpression(state, Expr_Proc);
+            *expression = (Expression*)proc_expr;
+            
+            SkipPastCurrentToken(state);
+            token = GetToken(state);
+            
+            if (token.kind == Token_OpenParen)
+            {
+                if (!ParseParameterList(state, &proc_expr->parameters))
+                {
+                    encountered_errors = true;
+                }
+            }
+            
+            if (!encountered_errors)
+            {
+                token = GetToken(state);
+                if (token.kind == Token_Arrow)
+                {
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind == Token_OpenParen)
+                    {
+                        SkipPastCurrentToken(state);
+                        
+                        Return_Value* prev_value = 0;
+                        while (!encountered_errors)
+                        {
+                            Return_Value* return_value = Arena_PushSize(state.arena, sizeof(Return_Value), ALIGNOF(Return_Value));
+                            ZeroStruct(return_value);
+                            
+                            if (prev_value == 0) proc_expr->return_values = return_value;
+                            else                 prev_value->next         = return_value;
+                            prev_value = return_value;
+                            
+                            NOT_IMPLEMENTED;
+                        }
+                    }
+                    
+                    else
+                    {
+                        Return_Value* return_value = Arena_PushSize(state.arena, sizeof(Return_Value), ALIGNOF(Return_Value));
+                        ZeroStruct(return_value);
+                        
+                        proc_expr->return_values = return_value;
+                        
+                        if (!ParseExpression(state, &return_value->type))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                }
+                
+                if (!encountered_errors)
+                {
+                    token = GetToken(state);
+                    if (token.kind == Token_Identifier && token.keyword == Keyword_Where)
+                    {
+                        SkipPastCurrentToken(state);
+                        
+                        if (!ParseExpression(state, &proc_expr->polymorph_condition))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_TripleMinus)
+                        {
+                            SkipPastCurrentToken(state);
+                            
+                            proc_expr->is_decl = true;
+                        }
+                        
+                        else if (token.kind == Token_OpenBrace || token.kind == Token_Identifier && token.keyword == Keyword_Do)
+                        {
+                            NOT_IMPLEMENTED;
+                        }
+                    }
+                }
+            }
         }
         
-        else if (token.keyword == Keyword_Struct)
+        else if (token.keyword == Keyword_Struct || token.keyword == Keyword_Union)
         {
-            NOT_IMPLEMENTED;
-        }
-        
-        else if (token.keyword == Keyword_Union)
-        {
-            NOT_IMPLEMENTED;
+            Struct_Expression* struct_expr = PushExpression(state, token.keyword == Keyword_Struct ? Expr_Struct : Expr_Union);
+            *expression = (Expression*)struct_expr;
+            
+            SkipPastCurrentToken(state);
+            token = GetToken(state);
+            
+            if (token.kind == Token_OpenParen)
+            {
+                if (!ParseParameterList(state, &struct_expr->parameters)) encountered_errors = true;
+                else
+                {
+                    token = GetToken(state);
+                    
+                    if (token.kind == Token_Identifier && token.keyword == Keyword_Where)
+                    {
+                        SkipPastCurrentToken(state);
+                        
+                        if (!ParseExpression(state, &struct_expr->polymorph_condition))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                }
+            }
+            
+            else if (token.kind == Token_Identifier && token.keyword == Keyword_Where)
+            {
+                //// ERROR: Polymorph condition without parameter list
+                encountered_errors = true;
+            }
+            
+            if (!encountered_errors)
+            {
+                token = GetToken(state);
+                
+                if (token.kind == Token_Identifier && token.keyword == Keyword_Do)
+                {
+                    //// ERROR: Do is not applicable on structs
+                    encountered_errors = true;
+                }
+                
+                else if (token.kind != Token_OpenBrace)
+                {
+                    //// ERROR: Missing struct body
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind != Token_CloseBrace)
+                    {
+                        Struct_Member* prev_member = 0;
+                        while (!encountered_errors)
+                        {
+                            Struct_Member* struct_member = Arena_PushSize(state.arena, sizeof(Struct_Member), ALIGNOF(Struct_Member));
+                            ZeroStruct(struct_member);
+                            
+                            if (prev_member == 0) struct_expr->members = struct_member;
+                            else                  prev_member->next    = struct_member;
+                            prev_member = struct_member;
+                            
+                            token = GetToken(state);
+                            
+                            if (token.kind == Token_Identifier && token.keyword == Keyword_Using)
+                            {
+                                SkipPastCurrentToken(state);
+                                
+                                struct_member->is_using = true;
+                            }
+                            
+                            token = GetToken(state);
+                            if (token.kind != Token_Identifier)
+                            {
+                                //// ERROR: Missing struct member name
+                                encountered_errors = true;
+                            }
+                            
+                            else if (token.keyword != Keyword_Invalid)
+                            {
+                                //// ERROR: Invalid use of keyword as struct member name
+                                encountered_errors = true;
+                            }
+                            
+                            else
+                            {
+                                struct_member->name = token.identifier;
+                                
+                                SkipPastCurrentToken(state);
+                                token = GetToken(state);
+                                
+                                if (token.kind == Token_Comma)
+                                {
+                                    //// ERROR: Multivariable declarations are not allowed in structs
+                                    encountered_errors = true;
+                                }
+                                
+                                else if (token.kind != Token_Colon)
+                                {
+                                    //// ERROR: Missing type of struct member
+                                    encountered_errors = true;
+                                }
+                                
+                                else
+                                {
+                                    SkipPastCurrentToken(state);
+                                    
+                                    if (!ParseExpression(state, &struct_member->type)) encountered_errors = true;
+                                    else
+                                    {
+                                        token = GetToken(state);
+                                        
+                                        if (token.kind == Token_Comma) SkipPastCurrentToken(state);
+                                        else break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_CloseBrace) SkipPastCurrentToken(state);
+                        else
+                        {
+                            //// ERROR: Missing matching closing brace
+                            encountered_errors = true;
+                        }
+                    }
+                }
+            }
         }
         
         else if (token.keyword == Keyword_Enum)
         {
-            NOT_IMPLEMENTED;
+            Enum_Expression* enum_expr = PushExpression(state, Expr_Enum);
+            *expression = (Expression*)enum_expr;
+            
+            SkipPastCurrentToken(state);
+            token = GetToken(state);
+            
+            if (token.kind != Token_OpenBrace)
+            {
+                if (!ParseExpression(state, &enum_expr->elem_type))
+                {
+                    encountered_errors = true;
+                }
+            }
+            
+            if (!encountered_errors)
+            {
+                token = GetToken(state);
+                
+                if (token.kind == Token_Identifier && token.keyword == Keyword_Do)
+                {
+                    //// ERROR: Do is not applicable on enums
+                    encountered_errors = true;
+                }
+                
+                else if (token.kind != Token_OpenBrace)
+                {
+                    //// ERROR: Missing enum body
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind != Token_CloseBrace)
+                    {
+                        Enum_Member* prev_member = 0;
+                        while (!encountered_errors)
+                        {
+                            Enum_Member* enum_member = Arena_PushSize(state.arena, sizeof(Enum_Member), ALIGNOF(Enum_Member));
+                            ZeroStruct(enum_member);
+                            
+                            if (prev_member == 0) enum_expr->members = enum_member;
+                            else                  prev_member->next  = enum_member;
+                            prev_member = enum_member;
+                            
+                            token = GetToken(state);
+                            
+                            if (token.kind != Token_Identifier)
+                            {
+                                //// ERROR: Missing enum member name
+                                encountered_errors = true;
+                            }
+                            
+                            else if (token.keyword != Keyword_Invalid)
+                            {
+                                //// ERROR: Invalid use of keyword as enum member
+                                encountered_errors = true;
+                            }
+                            
+                            else
+                            {
+                                enum_member->name = token.identifier;
+                                
+                                SkipPastCurrentToken(state);
+                                token = GetToken(state);
+                                
+                                if (token.kind == Token_Equals)
+                                {
+                                    SkipPastCurrentToken(state);
+                                    
+                                    if (!ParseExpression(state, &enum_member->value))
+                                    {
+                                        encountered_errors = true;
+                                    }
+                                }
+                                
+                                if (!encountered_errors)
+                                {
+                                    token = GetToken(state);
+                                    
+                                    if (token.kind == Token_Comma) SkipPastCurrentToken(state);
+                                    else break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_CloseBrace) SkipPastCurrentToken(state);
+                        else
+                        {
+                            //// ERROR: Missing matching closing brace
+                            encountered_errors = true;
+                        }
+                    }
+                }
+            }
         }
         
         else
@@ -173,6 +523,24 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
                 else
                 {
                     //// ERROR: Missing matching closing brace
+                    encountered_errors = true;
+                }
+            }
+        }
+        
+        else if (token.kind == Token_OpenParen)
+        {
+            SkipPastCurrentToken(state);
+            
+            if (!ParseExpression(state, expression)) encountered_errors = true;
+            else
+            {
+                token = GetToken(state);
+                
+                if (token.kind == Token_CloseParen) SkipPastCurrentToken(state);
+                else
+                {
+                    //// ERROR: Missing matching closing parenthesis
                     encountered_errors = true;
                 }
             }
