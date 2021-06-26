@@ -123,3 +123,130 @@ Arena_FreeAll(Memory_Arena* arena)
         block = next;
     }
 }
+
+typedef struct Bucket
+{
+    struct Bucket* prev;
+    struct Bucket* next;
+} Bucket;
+
+void*
+BA_Push(Bucket_Array* array)
+{
+    array->current_bucket_size += 1;
+    
+    if (array->current_bucket_size % array->bucket_capacity == 1)
+    {
+        if (array->current && array->current->next) array->current = array->current->next;
+        else
+        {
+            Bucket* bucket = Arena_PushSize(array->arena, sizeof(Bucket) + array->bucket_capacity * array->element_size, ALIGNOF(Bucket));
+            bucket->next = 0;
+            bucket->prev = array->current;
+            
+            if (array->current) array->current->next = bucket;
+            else                array->first         = bucket;
+            array->current = bucket;
+        }
+        
+        array->bucket_count        += 1;
+        array->current_bucket_size %= array->bucket_capacity;
+    }
+    
+    return (u8*)(array->current + 1) + (array->current_bucket_size - 1) * array->element_size;
+}
+
+void
+BA_Pop(Bucket_Array* array, void* value)
+{
+    ASSERT(array->current_bucket_size > 0);
+    
+    array->current_bucket_size -= 1;
+    if (value != 0) Copy((u8*)(array->current + 1) + array->current_bucket_size * array->element_size, value, array->element_size);
+    
+    if (array->current_bucket_size == 0 && array->current->prev != 0)
+    {
+        array->current             = array->current->prev;
+        array->current_bucket_size = array->bucket_capacity;
+        array->bucket_count       -= 1;
+    }
+}
+
+umm
+BA_ElementCount(Bucket_Array* array)
+{
+    return (array->bucket_count - 1) * array->bucket_capacity + array->current_bucket_size;
+}
+
+void*
+BA_ElementAt(Bucket_Array* array, umm index)
+{
+    ASSERT(array->bucket_count > 0 && index < BA_ElementCount(array));
+    
+    umm bucket_index  = index / array->bucket_capacity;
+    umm bucket_offset = index % array->bucket_capacity;
+    
+    
+    Bucket* bucket = 0;
+    if (bucket_index < BUCKET_ARRAY_BUCKET_CACHE_SIZE) bucket = array->bucket_cache[bucket_index];
+    else
+    {
+        bucket = array->bucket_cache[BUCKET_ARRAY_BUCKET_CACHE_SIZE - 1]->next;
+        for (umm i = BUCKET_ARRAY_BUCKET_CACHE_SIZE; i < bucket_index; ++i)
+        {
+            bucket = bucket->next;
+        }
+    }
+    
+    return (u8*)(bucket + 1) + bucket_offset * array->element_size;
+}
+
+void
+BA_ClearAll(Bucket_Array* array)
+{
+    array->current             = array->first;
+    array->current_bucket_size = 0;
+    array->bucket_count        = 0;
+}
+
+typedef struct BA_Iterator
+{
+    umm index;
+    Bucket* current_bucket;
+    void* current;
+} BA_Iterator;
+
+BA_Iterator
+BA_Iterate(Bucket_Array* array, BA_Iterator* prev_it)
+{
+    BA_Iterator it;
+    
+    if (prev_it == 0)
+    {
+        it = (BA_Iterator){
+            .index = 0,
+            .current_bucket = array->first,
+            .current        = (array->current_bucket_size == 0 ? 0 : array->first + 1)
+        };
+    }
+    
+    else
+    {
+        it = *prev_it;
+        it.index += 1;
+        
+        umm offset = it.index % array->bucket_capacity;
+        if (offset)
+        {
+            it.current_bucket = it.current_bucket->next;
+        }
+        
+        it.current = 0;
+        if (it.current_bucket != array->current || offset < array->current_bucket_size)
+        {
+            it.current = (u8*)(it.current_bucket + 1) + offset * array->element_size;
+        }
+    }
+    
+    return it;
+}

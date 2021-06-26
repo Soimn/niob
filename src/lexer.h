@@ -41,12 +41,12 @@ enum TOKEN_KIND
     Token_LeftShiftEquals,                      // <<=
     Token_LastAssignment = Token_LeftShiftEquals,
     
-    Token_FirstRangeLevel = 52,
+    Token_FirstRangeLevel = 80,
     Token_Elipsis = Token_FirstRangeLevel,      // ..
     Token_ElipsisLess,                          // ..<
     Token_LastRangeLevel = Token_ElipsisLess,
     
-    Token_FirstMulLevel = 65,
+    Token_FirstMulLevel = 100,
     Token_Star = Token_FirstMulLevel,           // *
     Token_Slash,                                // /
     Token_Rem,                                  // %
@@ -57,14 +57,14 @@ enum TOKEN_KIND
     Token_LeftShift,                            // <<
     Token_LastMulLevel = Token_LeftShift,
     
-    Token_FirstAddLevel = 78,
+    Token_FirstAddLevel = 120,
     Token_Plus = Token_FirstAddLevel,           // +
     Token_Minus,                                // -
     Token_Or,                                   // |
     Token_Hat,                                  // ^
     Token_LastAddLevel = Token_Hat,
     
-    Token_FirstComparative = 91,
+    Token_FirstComparative = 140,
     Token_EqualEquals = Token_FirstComparative, // ==
     Token_NotEquals,                            // !=
     Token_Less,                                 // <
@@ -73,9 +73,9 @@ enum TOKEN_KIND
     Token_GreaterEquals,                        // >=
     Token_LastComparative = Token_GreaterEquals,
     
-    Token_AndAnd = 104,                         // &&
+    Token_AndAnd = 160,                         // &&
     
-    Token_OrOr = 117,                           // ||
+    Token_OrOr = 180,                           // ||
     
     Token_Identifier,
     Token_String,
@@ -99,7 +99,12 @@ enum KEYWORD_KIND
     Keyword_Struct,
     Keyword_Union,
     Keyword_Enum,
-    Keyword_If,
+    Keyword_True,
+    Keyword_False,
+    Keyword_As,
+    
+    Keyword_FirstStatementInitiator,
+    Keyword_If = Keyword_FirstStatementInitiator,
     Keyword_Else,
     Keyword_When,
     Keyword_While,
@@ -109,8 +114,11 @@ enum KEYWORD_KIND
     Keyword_Using,
     Keyword_Defer,
     Keyword_Return,
-    Keyword_True,
-    Keyword_False,
+    Keyword_Import,
+    Keyword_Foreign,
+    Keyword_Unreachable,
+    Keyword_NotImplemented,
+    Keyword_LastStatementInitiator = Keyword_NotImplemented,
     
     KEYWORD_COUNT
 };
@@ -120,7 +128,8 @@ typedef struct Token
     u32 offset;
     u32 offset_to_line_start;
     u32 line;
-    u32 size;
+    u16 size;
+    Enum8(TOKEN_KIND) kind;
     
     union
     {
@@ -138,16 +147,10 @@ typedef struct Token
         
         f64 floating;
     };
-    
-    Enum8(TOKEN_KIND) kind;
 } Token;
 
-#define LEXER_TOKEN_BUFFER_SIZE 16
-#define LEXER_TOKEN_WINDOW_SIZE 3
 typedef struct Lexer
 {
-    Workspace* workspace;
-    
     String string;
     u8 at[2];
     
@@ -155,13 +158,9 @@ typedef struct Lexer
     u32 offset_to_line_start;
     u32 line;
     
-    umm token_window_index;
-    Token buffer[MAX(LEXER_TOKEN_WINDOW_SIZE, LEXER_TOKEN_BUFFER_SIZE)];
-    
     Identifier keywords[KEYWORD_COUNT];
 } Lexer;
 
-// TODO: Error reporting and string allocation
 void
 Lexer_AdvanceCursor(Lexer* lexer)
 {
@@ -194,53 +193,81 @@ Lexer_AdvanceCursor(Lexer* lexer)
     }
 }
 
-void
-Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
+bool
+LexText(Workspace* workspace, String text, Memory_Arena* token_arena, Memory_Arena* string_arena, Bucket_Array(Token)* token_array)
 {
+    Lexer lexer = {0};
+    lexer.string    = text;
+    lexer.line      = 1;
+    
+    lexer.keywords[Keyword_Invalid]        = 0;
+    lexer.keywords[Keyword_Do]             = WS_GetIdentifier(workspace, STR("do"));
+    lexer.keywords[Keyword_In]             = WS_GetIdentifier(workspace, STR("in"));
+    lexer.keywords[Keyword_Where]          = WS_GetIdentifier(workspace, STR("where"));
+    lexer.keywords[Keyword_Proc]           = WS_GetIdentifier(workspace, STR("proc"));
+    lexer.keywords[Keyword_Struct]         = WS_GetIdentifier(workspace, STR("struct"));
+    lexer.keywords[Keyword_Union]          = WS_GetIdentifier(workspace, STR("union"));
+    lexer.keywords[Keyword_Enum]           = WS_GetIdentifier(workspace, STR("enum"));
+    lexer.keywords[Keyword_If]             = WS_GetIdentifier(workspace, STR("if"));
+    lexer.keywords[Keyword_Else]           = WS_GetIdentifier(workspace, STR("else"));
+    lexer.keywords[Keyword_When]           = WS_GetIdentifier(workspace, STR("when"));
+    lexer.keywords[Keyword_While]          = WS_GetIdentifier(workspace, STR("while"));
+    lexer.keywords[Keyword_For]            = WS_GetIdentifier(workspace, STR("for"));
+    lexer.keywords[Keyword_Break]          = WS_GetIdentifier(workspace, STR("break"));
+    lexer.keywords[Keyword_Continue]       = WS_GetIdentifier(workspace, STR("continue"));
+    lexer.keywords[Keyword_Using]          = WS_GetIdentifier(workspace, STR("using"));
+    lexer.keywords[Keyword_Defer]          = WS_GetIdentifier(workspace, STR("defer"));
+    lexer.keywords[Keyword_Return]         = WS_GetIdentifier(workspace, STR("return"));
+    lexer.keywords[Keyword_True]           = WS_GetIdentifier(workspace, STR("true"));
+    lexer.keywords[Keyword_False]          = WS_GetIdentifier(workspace, STR("false"));
+    lexer.keywords[Keyword_Import]         = WS_GetIdentifier(workspace, STR("import"));
+    lexer.keywords[Keyword_Foreign]        = WS_GetIdentifier(workspace, STR("foreign"));
+    lexer.keywords[Keyword_As]             = WS_GetIdentifier(workspace, STR("as"));
+    lexer.keywords[Keyword_Unreachable]    = WS_GetIdentifier(workspace, STR("unreachable"));
+    lexer.keywords[Keyword_NotImplemented] = WS_GetIdentifier(workspace, STR("not_implemented"));
+    
     bool encountered_errors = false;
     
-    Zero(&lexer->buffer[start_index], (ARRAY_SIZE(lexer->buffer) - 2) * sizeof(Token));
-    
-    for (umm i = start_index; i < ARRAY_SIZE(lexer->buffer) && !encountered_errors; ++i)
+    while (!encountered_errors)
     {
         while (!encountered_errors)
         {
-            if (lexer->at[0] == ' '  || lexer->at[0] == '\t' ||
-                lexer->at[0] == '\v' || lexer->at[0] == '\r' ||
-                lexer->at[0] == '\f' || lexer->at[0] == '\n')
+            if (lexer.at[0] == ' '  || lexer.at[0] == '\t' ||
+                lexer.at[0] == '\v' || lexer.at[0] == '\r' ||
+                lexer.at[0] == '\f' || lexer.at[0] == '\n')
             {
-                Lexer_AdvanceCursor(lexer);
+                Lexer_AdvanceCursor(&lexer);
             }
             
-            else if (lexer->at[0] == '/' && (lexer->at[1] == '/' || lexer->at[1] == '*'))
+            else if (lexer.at[0] == '/' && (lexer.at[1] == '/' || lexer.at[1] == '*'))
             {
-                if (lexer->at[1] == '/')
+                if (lexer.at[1] == '/')
                 {
-                    while (lexer->at[0] != 0 && lexer->at[0] != '\n') Lexer_AdvanceCursor(lexer);
+                    while (lexer.at[0] != 0 && lexer.at[0] != '\n') Lexer_AdvanceCursor(&lexer);
                     
                 }
                 
                 else
                 {
-                    Lexer_AdvanceCursor(lexer);
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     umm nest_level = 1;
-                    while (nest_level != 0 && lexer->at[0] != 0)
+                    while (nest_level != 0 && lexer.at[0] != 0)
                     {
-                        if (lexer->at[0] == '/' && lexer->at[1] == '*')
+                        if (lexer.at[0] == '/' && lexer.at[1] == '*')
                         {
-                            Lexer_AdvanceCursor(lexer);
+                            Lexer_AdvanceCursor(&lexer);
                             nest_level += 1;
                         }
                         
-                        else if (lexer->at[0] == '*' && lexer->at[1] == '/')
+                        else if (lexer.at[0] == '*' && lexer.at[1] == '/')
                         {
-                            Lexer_AdvanceCursor(lexer);
+                            Lexer_AdvanceCursor(&lexer);
                             nest_level -= 1;
                         }
                         
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                     }
                     
                     if (nest_level != 0)
@@ -254,14 +281,14 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             else break;
         }
         
-        Token* token = &lexer->buffer[i];
+        Token* token = BA_Push(token_array);
         token->kind                 = Token_Invalid;
-        token->offset               = lexer->offset;
-        token->offset_to_line_start = lexer->offset_to_line_start;
-        token->line                 = lexer->line;
+        token->offset               = lexer.offset;
+        token->offset_to_line_start = lexer.offset_to_line_start;
+        token->line                 = lexer.line;
         
-        u8 c = lexer->at[0];
-        Lexer_AdvanceCursor(lexer);
+        u8 c = lexer.at[0];
+        Lexer_AdvanceCursor(&lexer);
         
         switch (c)
         {
@@ -284,15 +311,15 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Plus;
                 
-                if (lexer->at[0] == '+')
+                if (lexer.at[0] == '+')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_Increment;
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_PlusEquals;
                 }
             } break;
@@ -301,27 +328,27 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Minus;
                 
-                if (lexer->at[0] == '-')
+                if (lexer.at[0] == '-')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_Decrement;
                 }
                 
-                else if (lexer->at[0] == '-')
+                else if (lexer.at[0] == '-')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_TripleMinus;
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_MinusEquals;
                 }
                 
-                else if (lexer->at[0] == '>')
+                else if (lexer.at[0] == '>')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_Arrow;
                 }
             } break;
@@ -330,9 +357,9 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Star;
                 
-                if (lexer->at[0] == '=')
+                if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_StarEquals;
                 }
             } break;
@@ -341,9 +368,9 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Slash;
                 
-                if (lexer->at[0] == '=')
+                if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_SlashEquals;
                 }
             } break;
@@ -352,9 +379,9 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Hat;
                 
-                if (lexer->at[0] == '=')
+                if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_HatEquals;
                 }
             } break;
@@ -363,9 +390,9 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Not;
                 
-                if (lexer->at[0] == '=')
+                if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_NotEquals;
                 }
             } break;
@@ -374,9 +401,9 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Equals;
                 
-                if (lexer->at[0] == '=')
+                if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_EqualEquals;
                 }
             } break;
@@ -385,22 +412,22 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Rem;
                 
-                if (lexer->at[0] == '%')
+                if (lexer.at[0] == '%')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     token->kind = Token_Mod;
                     
-                    if (lexer->at[0] == '=')
+                    if (lexer.at[0] == '=')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         token->kind = Token_ModEquals;
                     }
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_RemEquals;
                 }
             } break;
@@ -409,22 +436,22 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_And;
                 
-                if (lexer->at[0] == '&')
+                if (lexer.at[0] == '&')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     token->kind = Token_AndAnd;
                     
-                    if (lexer->at[0] == '=')
+                    if (lexer.at[0] == '=')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         token->kind = Token_AndAndEquals;
                     }
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_AndEquals;
                 }
             } break;
@@ -433,22 +460,22 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Or;
                 
-                if (lexer->at[0] == '|')
+                if (lexer.at[0] == '|')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     token->kind = Token_OrOr;
                     
-                    if (lexer->at[0] == '=')
+                    if (lexer.at[0] == '=')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         token->kind = Token_OrOrEquals;
                     }
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_OrOrEquals;
                 }
             } break;
@@ -457,22 +484,22 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Less;
                 
-                if (lexer->at[0] == '<')
+                if (lexer.at[0] == '<')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     token->kind = Token_LeftShift;
                     
-                    if (lexer->at[0] == '=')
+                    if (lexer.at[0] == '=')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         token->kind = Token_LeftShiftEquals;
                     }
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_LessEquals;
                 }
             } break;
@@ -481,35 +508,35 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Greater;
                 
-                if (lexer->at[0] == '>')
+                if (lexer.at[0] == '>')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     
                     token->kind = Token_RightShift;
                     
-                    if (lexer->at[0] == '>')
+                    if (lexer.at[0] == '>')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         
                         token->kind = Token_ArithmeticRightShift;
                         
-                        if (lexer->at[0] == '=')
+                        if (lexer.at[0] == '=')
                         {
-                            Lexer_AdvanceCursor(lexer);
+                            Lexer_AdvanceCursor(&lexer);
                             token->kind = Token_ArithmeticRightShiftEquals;
                         }
                     }
                     
-                    else if (lexer->at[0] == '=')
+                    else if (lexer.at[0] == '=')
                     {
-                        Lexer_AdvanceCursor(lexer);
+                        Lexer_AdvanceCursor(&lexer);
                         token->kind = Token_RightShiftEquals;
                     }
                 }
                 
-                else if (lexer->at[0] == '=')
+                else if (lexer.at[0] == '=')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_GreaterEquals;
                 }
             } break;
@@ -518,15 +545,15 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             {
                 token->kind = Token_Period;
                 
-                if (lexer->at[0] == '.')
+                if (lexer.at[0] == '.')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_Elipsis;
                 }
                 
-                else if (lexer->at[0] == '<')
+                else if (lexer.at[0] == '<')
                 {
-                    Lexer_AdvanceCursor(lexer);
+                    Lexer_AdvanceCursor(&lexer);
                     token->kind = Token_ElipsisLess;
                 }
             } break;
@@ -549,25 +576,25 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                         token->kind = Token_Identifier;
                         
                         String ident = {
-                            .data = &lexer->string.data[lexer->offset - 1],
+                            .data = &lexer.string.data[lexer.offset - 1],
                             .size = 1
                         };
                         
-                        while (lexer->at[0] == '_'                        ||
-                               lexer->at[0] >= 'a' && lexer->at[0] <= 'z' ||
-                               lexer->at[0] >= 'A' && lexer->at[0] <= 'Z' ||
-                               lexer->at[0] >= '0' && lexer->at[0] <= '9')
+                        while (lexer.at[0] == '_'                        ||
+                               lexer.at[0] >= 'a' && lexer.at[0] <= 'z' ||
+                               lexer.at[0] >= 'A' && lexer.at[0] <= 'Z' ||
+                               lexer.at[0] >= '0' && lexer.at[0] <= '9')
                         {
-                            Lexer_AdvanceCursor(lexer);
+                            Lexer_AdvanceCursor(&lexer);
                             ++ident.size;
                         }
                         
-                        token->identifier = WS_GetIdentifier(lexer->workspace, ident);
+                        token->identifier = WS_GetIdentifier(workspace, ident);
                         
                         token->keyword = Keyword_Invalid;
                         for (umm j = 1; j < KEYWORD_COUNT; ++j)
                         {
-                            if (token->identifier == lexer->keywords[j])
+                            if (token->identifier == lexer.keywords[j])
                             {
                                 token->keyword = (u8)j;
                                 break;
@@ -584,17 +611,17 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                 else if (c == '\'' || c == '"')
                 {
                     String raw_string = {
-                        .data = &lexer->string.data[lexer->offset],
+                        .data = &lexer.string.data[lexer.offset],
                         .size = 0,
                     };
                     
-                    while (lexer->at[0] != 0 && lexer->at[0] != c)
+                    while (lexer.at[0] != 0 && lexer.at[0] != c)
                     {
-                        if (lexer->at[0] == '\\') Lexer_AdvanceCursor(lexer);
-                        Lexer_AdvanceCursor(lexer);
+                        if (lexer.at[0] == '\\') Lexer_AdvanceCursor(&lexer);
+                        Lexer_AdvanceCursor(&lexer);
                     }
                     
-                    if (lexer->at[0] == 0)
+                    if (lexer.at[0] == 0)
                     {
                         //// ERROR: Unterminated string/character literal
                         encountered_errors = true;
@@ -602,13 +629,11 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
                     
                     else
                     {
-                        raw_string.size = &lexer->string.data[lexer->offset] - raw_string.data;
-                        Lexer_AdvanceCursor(lexer);
+                        raw_string.size = &lexer.string.data[lexer.offset] - raw_string.data;
+                        Lexer_AdvanceCursor(&lexer);
                         
-                        // HACK
-                        Memory_Arena tmp_arena = {0};
                         String string = {
-                            .data = Arena_PushSize(&tmp_arena, raw_string.size, 1),
+                            .data = Arena_PushSize(string_arena, raw_string.size, 1),
                             .size = 0
                         };
                         
@@ -760,54 +785,15 @@ Lexer_EatTextAndFillBuffer(Lexer* lexer, umm start_index)
             } break;
         }
         
-        token->size = lexer->offset - token->offset;
-    }
-}
-
-Lexer
-Lexer_Init(Workspace* workspace, String string)
-{
-    Lexer lexer = {0};
-    lexer.workspace = workspace;
-    lexer.string    = string;
-    lexer.line      = 1;
-    
-    lexer.keywords[Keyword_Invalid]  = 0;
-    lexer.keywords[Keyword_Do]       = WS_GetIdentifier(workspace, STR("do"));
-    lexer.keywords[Keyword_In]       = WS_GetIdentifier(workspace, STR("in"));
-    lexer.keywords[Keyword_Where]    = WS_GetIdentifier(workspace, STR("where"));
-    lexer.keywords[Keyword_Proc]     = WS_GetIdentifier(workspace, STR("proc"));
-    lexer.keywords[Keyword_Struct]   = WS_GetIdentifier(workspace, STR("struct"));
-    lexer.keywords[Keyword_Union]    = WS_GetIdentifier(workspace, STR("union"));
-    lexer.keywords[Keyword_Enum]     = WS_GetIdentifier(workspace, STR("enum"));
-    lexer.keywords[Keyword_If]       = WS_GetIdentifier(workspace, STR("if"));
-    lexer.keywords[Keyword_Else]     = WS_GetIdentifier(workspace, STR("else"));
-    lexer.keywords[Keyword_When]     = WS_GetIdentifier(workspace, STR("when"));
-    lexer.keywords[Keyword_While]    = WS_GetIdentifier(workspace, STR("while"));
-    lexer.keywords[Keyword_For]      = WS_GetIdentifier(workspace, STR("for"));
-    lexer.keywords[Keyword_Break]    = WS_GetIdentifier(workspace, STR("break"));
-    lexer.keywords[Keyword_Continue] = WS_GetIdentifier(workspace, STR("continue"));
-    lexer.keywords[Keyword_Using]    = WS_GetIdentifier(workspace, STR("using"));
-    lexer.keywords[Keyword_Defer]    = WS_GetIdentifier(workspace, STR("defer"));
-    lexer.keywords[Keyword_Return]   = WS_GetIdentifier(workspace, STR("return"));
-    lexer.keywords[Keyword_True]     = WS_GetIdentifier(workspace, STR("true"));
-    lexer.keywords[Keyword_False]    = WS_GetIdentifier(workspace, STR("false"));
-    
-    Lexer_EatTextAndFillBuffer(&lexer, 0);
-    
-    return lexer;
-}
-
-void
-Lexer_AdvanceTokenWindow(Lexer* lexer)
-{
-    lexer->token_window_index += 1;
-    
-    if (lexer->token_window_index > ARRAY_SIZE(lexer->buffer) - LEXER_TOKEN_WINDOW_SIZE)
-    {
-        Copy(&lexer->buffer[ARRAY_SIZE(lexer->buffer) - 2], lexer->buffer, sizeof(Token) * 2);
-        lexer->token_window_index = 0;
+        umm token_size = lexer.offset - token->offset;
         
-        Lexer_EatTextAndFillBuffer(lexer, 2);
+        if (token_size <= U16_MAX) token->size = (u16)token_size;
+        else
+        {
+            //// ERROR: Token is too large
+            encountered_errors = true;
+        }
     }
+    
+    return !encountered_errors;
 }

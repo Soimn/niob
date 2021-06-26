@@ -61,7 +61,9 @@ typedef struct String
 
 typedef u32 Identifier;
 typedef u32 Character;
+typedef u32 Scope_ID;
 
+#define BLANK_IDENTIFIER 0
 #define IDENTIFIER_TABLE_BLOCK_SIZE 2048
 
 typedef struct Memory_Arena
@@ -71,11 +73,29 @@ typedef struct Memory_Arena
     u32 block_size;
 } Memory_Arena;
 
+// IMPORTANT NOTE: Supports only alignment leq. 8 bytes
+#define BUCKET_ARRAY_BUCKET_CACHE_SIZE 16
+typedef struct Bucket_Array
+{
+    Memory_Arena* arena;
+    struct Bucket* first;
+    struct Bucket* current;
+    umm bucket_capacity;
+    umm current_bucket_size;
+    umm bucket_count;
+    umm element_size;
+    
+    struct Bucket* bucket_cache[BUCKET_ARRAY_BUCKET_CACHE_SIZE];
+} Bucket_Array;
+
+#define Bucket_Array(T) Bucket_Array
+#define BA_INIT(A, T, C) (Bucket_Array){.arena = (A), .element_size = sizeof(T), .bucket_capacity = (C)}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 enum EXPRESSION_KIND
 {
-    // precedence 0: 0 - 12
+    // precedence 0: 0 - 19
     Expr_Invalid = 0,
     
     Expr_Identifier,
@@ -87,12 +107,13 @@ enum EXPRESSION_KIND
     Expr_StructLiteral,
     Expr_ArrayLiteral,
     Expr_Proc,
+    Expr_ProcType,
     Expr_Struct,
     Expr_Union,
     Expr_Enum,
     
-    // precedence 1: 13 - 25
-    Expr_FirstTypeLevel = 13,
+    // precedence 1: 20 - 39
+    Expr_FirstTypeLevel = 20,
     Expr_PointerType,
     Expr_SliceType,
     Expr_ArrayType,
@@ -100,8 +121,8 @@ enum EXPRESSION_KIND
     Expr_PolymorphicType,
     Expr_LastTypeLevel = Expr_PolymorphicType,
     
-    // precedence 2: 26 - 38
-    Expr_FirstPostfixLevel = 26,
+    // precedence 2: 40 - 59
+    Expr_FirstPostfixLevel = 40,
     Expr_Subscript = Expr_FirstPostfixLevel,
     Expr_Slice,
     Expr_Call,
@@ -110,8 +131,8 @@ enum EXPRESSION_KIND
     Expr_PostDecrement,
     Expr_LastPostfixLevel = Expr_PostDecrement,
     
-    // precedence 3: 39 - 51
-    Expr_FirstPrefixLevel = 39,
+    // precedence 3: 60 - 79
+    Expr_FirstPrefixLevel = 60,
     Expr_Negation = Expr_FirstPrefixLevel,
     Expr_Complement,
     Expr_Not,
@@ -122,14 +143,14 @@ enum EXPRESSION_KIND
     Expr_Spread,
     Expr_LastPrefixLevel = Expr_Spread,
     
-    // precedence 4: 52 - 64
-    Expr_FirstRangeLevel = 52,
+    // precedence 4: 80 - 99
+    Expr_FirstRangeLevel = 80,
     Expr_ClosedRange = Expr_FirstRangeLevel,
     Expr_HalfOpenRange,
     Expr_LastRangeLevel = Expr_HalfOpenRange,
     
-    // precedence 5: 65 - 77
-    Expr_FirstMulLevel = 65,
+    // precedence 5: 100 - 119
+    Expr_FirstMulLevel = 100,
     Expr_Mul = Expr_FirstMulLevel,
     Expr_Div,
     Expr_Rem,
@@ -141,16 +162,16 @@ enum EXPRESSION_KIND
     Expr_InfixCall,
     Expr_LastMulLevel = Expr_InfixCall,
     
-    // precedence 6: 78 - 90
-    Expr_FirstAddLevel = 78,
+    // precedence 6: 120 - 139
+    Expr_FirstAddLevel = 120,
     Expr_Add = Expr_FirstAddLevel,
     Expr_Sub,
     Expr_BitwiseOr,
     Expr_BitwiseXor,
     Expr_LastAddLevel = Expr_BitwiseOr,
     
-    // precedence 7: 91 - 103
-    Expr_FirstComparative = 91,
+    // precedence 7: 140 - 159
+    Expr_FirstComparative = 140,
     Expr_IsEqual = Expr_FirstComparative,
     Expr_IsNotEqual,
     Expr_IsStrictlyLess,
@@ -159,11 +180,11 @@ enum EXPRESSION_KIND
     Expr_IsGreater,
     Expr_LastComparative = Expr_IsGreater,
     
-    // precedence 8: 104 - 116
-    Expr_And = 104,
+    // precedence 8: 160 - 179
+    Expr_And = 160,
     
-    // precedence 9: 117 - 129
-    Expr_Or = 117,
+    // precedence 9: 180 - 199
+    Expr_Or = 180,
 };
 
 typedef struct Expression
@@ -171,6 +192,8 @@ typedef struct Expression
     struct Expression* next;
     Enum8(EXPRESSION_KIND) kind;
 } Expression;
+
+/////////////////////////////////
 
 typedef struct Argument
 {
@@ -191,7 +214,7 @@ typedef struct Parameter
 typedef struct Return_Value
 {
 	struct Return_Value* next;
-	Expression* names;
+	Expression* name;
 	Expression* type;
 } Return_Value;
 
@@ -304,7 +327,7 @@ typedef struct Proc_Expression
     Parameter* parameters;
     Return_Value* return_values;
     Expression* polymorph_condition;
-    struct Statement* body;
+    struct Block_Statement* body;
     bool is_decl;
 } Proc_Expression;
 
@@ -315,6 +338,7 @@ typedef struct Struct_Expression
     Parameter* parameters;
     Expression* polymorph_condition;
     Struct_Member* members;
+    bool is_decl;
 } Struct_Expression;
 
 typedef struct Enum_Expression
@@ -323,37 +347,207 @@ typedef struct Enum_Expression
     
     Expression* elem_type;
     Enum_Member* members;
+    bool is_decl;
 } Enum_Expression;
+// NOTE: Used for storing expressions on the stack
+typedef union Any_Expression
+{
+    Unary_Expression unary_expression;
+    Binary_Expression binary_expression;
+    ArrayType_Expression arraytype_expression;
+    Subscript_Expression subscript_expression;
+    Slice_Expression slice_expression;
+    Call_Expression call_expression;
+    ElementOf_Expression elementof_expression;
+    BasicLiteral_Expression basicliteral_expression;
+    StructLiteral_Expression structliteral_expression;
+    ArrayLiteral_Expression arrayliteral_expression;
+    Proc_Expression proc_expression;
+    Struct_Expression struct_expression;
+    Enum_Expression enum_expression;
+} Any_Expression;
 
 enum STATEMENT_KIND
 {
     Statement_Invalid = 0,
     
     Statement_Expression,
+    Statement_Block,
+    Statment_Declaration,
+    
+    Statement_If,
+    Statement_When,
+    Statement_While,
+    Statement_For,
+    Statement_Break,
+    Statement_Continue,
+    Statement_Defer,
+    Statement_Using,
+    Statement_Return,
     Statement_Assignment,
     
-    // ...
+    Statement_VariableDecl,
+    Statement_ConstantDecl,
+    Statement_ImportDecl,
 };
 
 typedef struct Statement
 {
+    struct Statement* next;
     Enum8(STATEMENT_KIND) kind;
 } Statement;
 
+typedef struct Expression_Statement
+{
+    struct Statement;
+    
+    Expression* expression;
+} Expression_Statement;
+
+typedef struct Block_Statement
+{
+    struct Statement;
+    
+    bool is_do;
+    Scope_ID scope;
+    Identifier label;
+    Statement* statements;
+} Block_Statement;
+
+typedef struct If_Statement
+{
+    struct Statement;
+    
+    Identifier label;
+    Statement* init;
+    Expression* condition;
+    Statement* true_branch;
+    Statement* false_branch;
+} If_Statement;
+
+typedef struct While_Statement
+{
+    struct Statement;
+    
+    Identifier label;
+    Statement* init;
+    Expression* condition;
+    Statement* step;
+    Statement* body;
+} While_Statement;
+
+typedef struct For_Statement
+{
+    struct Statement;
+    
+    Identifier label;
+    Expression* symbols;
+    Expression* collection;
+    Statement* body;
+} For_Statement;
+
+typedef struct ScopeControl_Statement
+{
+    struct Statement;
+    
+    Identifier label;
+} ScopeControl_Statement;
+
+typedef struct Defer_Statement
+{
+    struct Statement;
+    
+    Statement* statement;
+} Defer_Statement;
+
+typedef struct Using_Statement
+{
+    struct Statement;
+    
+    Expression* symbol;
+} Using_Statement;
+
+typedef struct Return_Statement
+{
+    struct Statement;
+    
+    Argument* arguments;
+} Return_Statement;
+
+typedef struct Assignment_Statement
+{
+    struct Statement;
+    
+    Enum8(EXPRESSION_KIND) op;
+    Expression* lhs;
+    Expression* rhs;
+} Assignment_Statement;
+
+typedef struct Variable_Declaration
+{
+    struct Statement;
+    
+    Expression* names;
+    Expression* type;
+    Expression* values;
+    bool is_uninitialized;
+    bool is_using;
+} Variable_Declaration;
+
+typedef struct Constant_Declaration
+{
+    struct Statement;
+    
+    Expression* names;
+    Expression* type;
+    Expression* values;
+    bool is_using;
+} Constant_Declaration;
+
+typedef struct Import_Declaration
+{
+    struct Statement;
+    
+    String path;
+    Identifier alias;
+} Import_Declaration;
+
+// NOTE: Used for storing statements on the stack
+typedef struct Any_Statement
+{
+    Expression_Statement expression_statement;
+    Block_Statement block_statement;
+    If_Statement if_statement;
+    While_Statement while_statement;
+    For_Statement for_statement;
+    ScopeControl_Statement scopecontrol_statement;
+    Defer_Statement defer_statement;
+    Using_Statement using_statement;
+    Return_Statement return_statement;
+    Assignment_Statement assignment_statement;
+    Variable_Declaration variable_declaration;
+    Constant_Declaration constant_declaration;
+    Import_Declaration import_declaration;
+    
+} Any_Statement;
+
 enum DECLARATION_KIND
 {
-    Decl_Import,
-    Decl_Variable,
-    Decl_Constant,
+    Decl_Invalid = 0,
+    
     Decl_Proc,
     Decl_Struct,
     Decl_Union,
     Decl_Enum,
+    Decl_Variable,
+    Decl_Constant,
+    Decl_Import,
 };
 
 typedef struct Declaration
 {
     Enum8(DECLARATION_KIND) kind;
+    Statement* statement;
 } Declaration;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -362,7 +556,12 @@ typedef struct Workspace
 {
     // resources
     
-    Memory_Arena identifier_table;
+    // store files
+    // temp
+    // store declarations (buckets)
+    // store identifiers (buckets)
+    
+    Bucket_Array(Identifier) identifier_table;
     
     // unchecked declarations
     // committed declarations
@@ -383,5 +582,16 @@ void WS_GenerateCode(Workspace* workspace);
 
 void WS_FlushErrorBuffer(Workspace* workspace);
 Identifier WS_GetIdentifier(Workspace* workspace, String string);
+
+
+void* Arena_PushSize(Memory_Arena* arena, umm size, u8 alignment);
+void  Arena_ClearAll(Memory_Arena* arena);
+void  Arena_FreeAll(Memory_Arena* arena);
+
+void* BA_Push(Bucket_Array* array);
+void  BA_Pop(Bucket_Array* array, void* value);
+umm   BA_ElementCount(Bucket_Array* array);
+void* BA_ElementAt(Bucket_Array* array, umm index);
+void  BA_ClearAll(Bucket_Array* array);
 
 #endif
