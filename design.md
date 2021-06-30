@@ -337,5 +337,58 @@ options: allow passing on dependencies, and keep all dendencies private. Since p
 it would make more sense for dependencies to be private, since this restricts the set of visible packages to those imported in a
 package's source code.
 
-## Shared Libraries
-Type information is lost (maybe pass type table via context?)
+## Foreign system
+automatic dynamic linking
+
+///////////////////////////////////////////////////////////////////
+
+when os == .Windows do foreign import "path/lib.dll";
+else                do foreign import "path/liba.so" as lib;
+
+foreign lib
+{
+	a :: proc ---
+	b :: proc ---
+	c :: proc ---
+	d :: proc ---
+	e :: proc ---
+	f :: proc ---
+}
+
+///////////////////////////////////////////////////////////////////
+
+when os == .Windows
+{
+	foreign import "path/lib.dll"
+	{
+		a :: proc ---
+		b :: proc ---
+		c :: proc ---
+		d :: proc ---
+		e :: proc ---
+		f :: proc ---
+	}
+}
+
+else
+{
+	foreign import "path/liba.so"
+	{
+		a :: proc ---
+		b :: proc ---
+		c :: proc ---
+		d :: proc ---
+		e :: proc ---
+		f :: proc ---
+	}
+}
+
+///////////////////////////////////////////////////////////////////
+
+
+
+## Attributes, directives, notes and metaprogramming
+
+Symbols at disposal
+* @
+* #

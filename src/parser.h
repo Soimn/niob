@@ -1299,8 +1299,51 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
                         
                         else
                         {
-                            slot = &(Expression*)((Binary_Expression*)*slot)->right;
+                            slot = (Expression**)&((Binary_Expression*)*slot)->right;
                         }
+                    }
+                }
+            }
+        }
+    }
+    
+    return !encountered_errors;
+}
+
+bool
+ParseConditional(Parser_State state, Expression** expression)
+{
+    bool encountered_errors = false;
+    
+    if (!ParseBinaryExpression(state, expression)) encountered_errors = true;
+    else
+    {
+        Token token = GetToken(state);
+        if (token.kind == Token_QuestionMark)
+        {
+            SkipPastCurrentToken(state);
+            
+            Conditional_Expression* conditional_expr = PushExpression(state, Expr_Conditional);
+            conditional_expr->condition = *expression;
+            *expression                 = (Expression*)conditional_expr;
+            
+            if (!ParseBinaryExpression(state, &conditional_expr->true_branch)) encountered_errors = true;
+            else
+            {
+                token = GetToken(state);
+                if (token.kind != Token_Colon)
+                {
+                    //// ERROR: Missing false branch
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    SkipPastCurrentToken(state);
+                    
+                    if (!ParseBinaryExpression(state, &conditional_expr->false_branch))
+                    {
+                        encountered_errors = true;
                     }
                 }
             }
@@ -1343,8 +1386,349 @@ ParseStatement(Parser_State state, Statement** statement, Any_Statement* memory)
         
         else
         {
-            // TODO: remember unreachable and not_implemented
-            NOT_IMPLEMENTED;
+            if (token.keyword == Keyword_If || token.keyword == Keyword_When)
+            {
+                Enum8(STATEMENT_KIND) kind = (token.keyword == Keyword_If ? Statement_If : Statement_When);
+                If_Statement* if_statement = PushStatement(state, kind, memory);
+                *statement = (Statement*)if_statement;
+                
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                Statement* first      = 0;
+                Any_Statement backing = {0};
+                if (token.kind != Token_Semicolon)
+                {
+                    if (!ParseStatement(state, &first, &backing))
+                    {
+                        encountered_errors = true;
+                    }
+                }
+                
+                if (!encountered_errors)
+                {
+                    token = GetToken(state);
+                    if (token.kind == Token_Semicolon)
+                    {
+                        SkipPastCurrentToken(state);
+                        
+                        if_statement->init = PushStatement(state, first->kind, 0);
+                        Copy(first, if_statement->init, Sizeof_Statement(first->kind));
+                        
+                        if (!ParseExpression(state, &if_statement->condition))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    else
+                    {
+                        if (first->kind != Statement_Expression)
+                        {
+                            //// ERROR: Missing condition
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            if_statement->init      = 0;
+                            if_statement->condition = ((Expression_Statement*)first)->expression;
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind != Token_OpenBrace && (token.kind != Token_Identifier || token.keyword != Keyword_Do))
+                        {
+                            //// ERROR: Missing body
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            if (!ParseBlockStatement(state, &if_statement->true_branch)) encountered_errors = true;
+                            else
+                            {
+                                token = GetToken(state);
+                                
+                                if (token.kind == Token_Identifier && token.keyword == Keyword_Else)
+                                {
+                                    SkipPastCurrentToken(state);
+                                    token = GetToken(state);
+                                    
+                                    if (token.kind == Token_Identifier && token.keyword == Keyword_If)
+                                    {
+                                        if_statement->false_branch.kind = Statement_Block;
+                                        if (!ParseStatement(state, &if_statement->false_branch.statements, 0))
+                                        {
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                    
+                                    else
+                                    {
+                                        if (!ParseBlockStatement(state, &if_statement->false_branch))
+                                        {
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_Else)
+            {
+                //// ERROR: Else without matching if/when
+                encountered_errors = true;
+            }
+            
+            else if (token.keyword == Keyword_While)
+            {
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                While_Statement* while_statement = PushStatement(state, Statement_While, memory);
+                *statement = (Statement*)while_statement;
+                
+                Statement* first            = 0;
+                Any_Statement first_backing = {0};
+                if (token.kind != Token_Semicolon)
+                {
+                    if (!ParseStatement(state, &first, &first_backing))
+                    {
+                        encountered_errors = true;
+                    }
+                }
+                
+                if (!encountered_errors)
+                {
+                    token = GetToken(state);
+                    if (token.kind != Token_Semicolon)
+                    {
+                        if (first->kind == Statement_Expression) while_statement->condition = ((Expression_Statement*)first)->expression;
+                        else
+                        {
+                            //// ERROR: Missing condition
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    else
+                    {
+                        Statement* second            = 0;
+                        Any_Statement second_backing = {0};
+                        
+                        SkipPastCurrentToken(state);
+                        token = GetToken(state);
+                        
+                        if (token.kind != Token_Semicolon)
+                        {
+                            if (!ParseStatement(state, &second, &second_backing))
+                            {
+                                encountered_errors = true;
+                            }
+                        }
+                        
+                        if (!encountered_errors)
+                        {
+                            if (second->kind != Statement_Expression)
+                            {
+                                //// ERROR: Missing condition, expected init; condition, but condition was a statement
+                                encountered_errors = true;
+                            }
+                            
+                            else
+                            {
+                                while_statement->init = PushStatement(state, first->kind, 0);
+                                Copy(first, while_statement->init, Sizeof_Statement(first->kind));
+                                
+                                while_statement->condition = ((Expression_Statement*)second)->expression;
+                                
+                                token = GetToken(state);
+                                if (token.kind == Token_Semicolon)
+                                {
+                                    if (!ParseStatement(state, &while_statement->step, 0))
+                                    {
+                                        encountered_errors = true;
+                                    }
+                                }
+                                
+                                if (!encountered_errors)
+                                {
+                                    token = GetToken(state);
+                                    if (token.kind != Token_OpenBrace && (token.kind != Token_Identifier || token.keyword != Keyword_Do))
+                                    {
+                                        //// ERROR: Missing body
+                                        encountered_errors = true;
+                                    }
+                                    
+                                    else
+                                    {
+                                        if (!ParseBlockStatement(state, &while_statement->body))
+                                        {
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_For)
+            {
+                SkipPastCurrentToken(state);
+                
+                For_Statement* for_statement = PushStatement(state, Statement_For, memory);
+                *statement = (Statement*)for_statement;
+                
+                Expression* expressions = 0;
+                Expression* prev_expr   = 0;
+                while (!encountered_errors)
+                {
+                    Expression* expression;
+                    if (!ParseExpression(state, &expression)) encountered_errors = true;
+                    else
+                    {
+                        if (prev_expr == 0) expressions     = expression;
+                        else                prev_expr->next = expression;
+                        prev_expr = expression;
+                        
+                        token = GetToken(state);
+                        if (token.kind == Token_Semicolon) SkipPastCurrentToken(state);
+                        else break;
+                    }
+                }
+                
+                if (!encountered_errors)
+                {
+                    token = GetToken(state);
+                    if (token.kind != Token_Identifier || token.keyword != Keyword_In)
+                    {
+                        if (expressions->next == 0) for_statement->collection = expressions;
+                        else
+                        {
+                            //// ERROR: Cannot iterate over several collections (maybe missing 'in')
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    else
+                    {
+                        for_statement->symbols = expressions;
+                        
+                        SkipPastCurrentToken(state);
+                        
+                        if (!ParseExpression(state, &for_statement->collection))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        if (token.kind != Token_OpenBrace && (token.kind != Token_Identifier || token.keyword != Keyword_Do))
+                        {
+                            //// ERROR: Missing body
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            if (!ParseBlockStatement(state, &for_statement->body))
+                            {
+                                encountered_errors = true;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_Break || token.keyword == Keyword_Continue)
+            {
+                Enum8(STATEMENT_KIND) kind = (token.keyword == Keyword_Break ? Statement_Break : Statement_Continue);
+                ScopeControl_Statement* scopecontrol_statement = PushStatement(state, kind, memory);
+                *statement = (Statement*)scopecontrol_statement;
+                
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                if (token.kind == Token_Identifier)
+                {
+                    if (token.keyword != Keyword_Invalid)
+                    {
+                        //// ERROR: Invalid use of keyword as label
+                        encountered_errors = true;
+                    }
+                    
+                    else
+                    {
+                        scopecontrol_statement->label = token.identifier;
+                        SkipPastCurrentToken(state);
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_Defer)
+            {
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                if (token.kind == Token_Semicolon)
+                {
+                    //// ERROR: Missing statement after defer
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    Defer_Statement* defer_statement = PushStatement(state, Statement_Defer, memory);
+                    *statement = (Statement*)defer_statement;
+                    
+                    if (!ParseStatement(state, &defer_statement->statement, 0))
+                    {
+                        encountered_errors = true;
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_Return)
+            {
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                Return_Statement* return_statement = PushStatement(state, Statement_Return, memory);
+                *statement = (Statement*)return_statement;
+                
+                if (token.kind != Token_Semicolon)
+                {
+                    if (!ParseArgumentList(state, &return_statement->arguments))
+                    {
+                        encountered_errors = true;
+                    }
+                }
+            }
+            
+            else if (token.keyword == Keyword_Unreachable)
+            {
+                *statement = PushStatement(state, Statement_Unreachable, memory);
+                SkipPastCurrentToken(state);
+            }
+            
+            else if (token.keyword == Keyword_NotImplemented)
+            {
+                *statement = PushStatement(state, Statement_NotImplemented, memory);
+                SkipPastCurrentToken(state);
+            }
+            
+            else INVALID_CODE_PATH;
         }
     }
     

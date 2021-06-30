@@ -185,6 +185,9 @@ enum EXPRESSION_KIND
     
     // precedence 9: 180 - 199
     Expr_Or = 180,
+    
+    // precedence 10: 200 - 219
+    Expr_Conditional,
 };
 
 typedef struct Expression
@@ -249,6 +252,15 @@ typedef struct Binary_Expression
     Expression* left;
     Expression* right;
 } Binary_Expression;
+
+typedef struct Conditional_Expression
+{
+    struct Expression;
+    
+    Expression* condition;
+    Expression* true_branch;
+    Expression* false_branch;
+} Conditional_Expression;
 
 typedef struct ArrayType_Expression
 {
@@ -385,6 +397,8 @@ enum STATEMENT_KIND
     Statement_Using,
     Statement_Return,
     Statement_Assignment,
+    Statement_Unreachable,
+    Statement_NotImplemented,
     
     Statement_VariableDecl,
     Statement_ConstantDecl,
@@ -421,8 +435,8 @@ typedef struct If_Statement
     Identifier label;
     Statement* init;
     Expression* condition;
-    Statement* true_branch;
-    Statement* false_branch;
+    Block_Statement true_branch;
+    Block_Statement false_branch;
 } If_Statement;
 
 typedef struct While_Statement
@@ -433,7 +447,7 @@ typedef struct While_Statement
     Statement* init;
     Expression* condition;
     Statement* step;
-    Statement* body;
+    Block_Statement body;
 } While_Statement;
 
 typedef struct For_Statement
@@ -443,7 +457,7 @@ typedef struct For_Statement
     Identifier label;
     Expression* symbols;
     Expression* collection;
-    Statement* body;
+    Block_Statement body;
 } For_Statement;
 
 typedef struct ScopeControl_Statement

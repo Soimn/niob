@@ -55,7 +55,21 @@ System_FreeMemory(void* ptr)
 
 #elif __linux__
 
-NOT_IMPLEMENTED;
+void*
+System_AllocateMemory(umm size)
+{
+    void* result = 0;
+    
+    NOT_IMPLEMENTED;
+    
+    return result;
+}
+
+void
+System_FreeMemory(void* ptr)
+{
+    NOT_IMPLEMENTED;
+}
 
 #endif
 
