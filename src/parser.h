@@ -60,7 +60,7 @@ Sizeof_Expression(Enum8(EXPRESSION_KIND) kind)
     ASSERT(kind != Expr_Invalid);
     
     umm size       = 0;
-    umm precedence = kind / 13;
+    umm precedence = kind / 20;
     
     if (precedence == 3 || precedence == 1 && kind != Expr_ArrayType || kind == Expr_PostIncrement || kind == Expr_PostDecrement)
     {
@@ -178,6 +178,80 @@ ParseArgumentList(Parser_State state, Argument** arguments)
             }
         }
         
+    }
+    
+    return !encountered_errors;
+}
+
+bool
+ParseAttributes(Parser_State state, Attribute** attributes)
+{
+    bool encountered_errors = false;
+    
+    Attribute* prev_attribute = 0;
+    while (!encountered_errors)
+    {
+        Token token = GetToken(state);
+        
+        if (token.kind != Token_At) break;
+        else
+        {
+            Attribute* attribute = Arena_PushSize(state.arena, sizeof(Attribute), ALIGNOF(Attribute));
+            ZeroStruct(attribute);
+            
+            if (prev_attribute == 0) attributes           = attribute;
+            else                     prev_attribute->next = attribute;
+            prev_attribute = attribute;
+            
+            SkipPastCurrentToken(state);
+            token = GetToken(state);
+            
+            if (token.kind != Token_Identifier)
+            {
+                //// ERROR: Missing name of attribute
+                encountered_errors = true;
+            }
+            
+            else if (token.identifier == BLANK_IDENTIFIER)
+            {
+                //// ERROR: Invalid use of blank identifier as attribute name
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                attribute->name = token.identifier;
+                
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                if (token.kind == Token_OpenParen)
+                {
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind != Token_CloseParen)
+                    {
+                        if (!ParseArgumentList(state, &attribute->arguments))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_CloseParen) SkipPastCurrentToken(state);
+                        else
+                        {
+                            //// ERROR: Missing closing parenthesis
+                            encountered_errors = true;
+                        }
+                    }
+                }
+            }
+        }
     }
     
     return !encountered_errors;
@@ -920,6 +994,61 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
             }
         }
         
+        else if (token.kind == Token_Pound)
+        {
+            Directive_Expression directive_expr = PushExpression(state, Expr_Directive);
+            *expression = (Expression*)directive_expr;
+            
+            SkipPastCurrentToken(state);
+            token = GetToken(state);
+            
+            if (token.kind != Token_Identifier)
+            {
+                //// ERROR: Missing name of directive
+                encountered_errors = true;
+            }
+            
+            else if (token.identifier == BLANK_IDENTIFIER)
+            {
+                //// ERROR: Invalid use of blank identifier as directive name
+                encountered_errors = true;
+            }
+            
+            else
+            {
+                directive_expr->name = token.identifier;
+                
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                if (token.kind == Token_OpenParen)
+                {
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind != Token_CloseParen)
+                    {
+                        if (!ParseArgumentList(state, &attribute->arguments))
+                        {
+                            encountered_errors = true;
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_CloseParen) SkipPastCurrentToken(state);
+                        else
+                        {
+                            //// ERROR: Missing closing parenthesis
+                            encountered_errors = true;
+                        }
+                    }
+                }
+            }
+        }
+        
         else
         {
             if (token.kind != Token_Identifier)
@@ -1268,13 +1397,13 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
         {
             Token token = GetToken(state);
             
-            // IMPORTANT NOTE: EXPRESSION_KIND is organized in blocks of values, each 13 in size
-            //                 the blocks from 3 to 8 contain binary expressions
+            // IMPORTANT NOTE: EXPRESSION_KIND is organized in blocks of values, each 20 in size
+            //                 the blocks from 4 to 9 contain binary expressions
             
             Enum8(EXPRESSION_KIND) op = (token.kind == Token_Identifier && token.keyword == Keyword_Invalid
                                          ? Expr_InfixCall
                                          : token.kind);
-            umm precedence = op / 13;
+            umm precedence = op / 20;
             
             // precedence < 4 || precedence > 9
             if (precedence - 4 > 5) break;
@@ -1291,7 +1420,7 @@ ParseBinaryExpression(Parser_State state, Expression** expression)
                     
                     for (;;)
                     {
-                        if ((*slot)->kind / 13 <= precedence)
+                        if ((*slot)->kind / 20 <= precedence)
                         {
                             binary_expr->left = *slot;
                             *slot             = (Expression*)binary_expr;

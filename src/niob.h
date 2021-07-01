@@ -93,6 +93,13 @@ typedef struct Bucket_Array
 
 ///////////////////////////////////////////////////////////////////////////////
 
+typedef struct Attribute
+{
+    struct Attribute* next;
+    Identifier name;
+    struct Argument* arguments;
+} Attribute;
+
 enum EXPRESSION_KIND
 {
     // precedence 0: 0 - 19
@@ -111,6 +118,7 @@ enum EXPRESSION_KIND
     Expr_Struct,
     Expr_Union,
     Expr_Enum,
+    Expr_Directive,
     
     // precedence 1: 20 - 39
     Expr_FirstTypeLevel = 20,
@@ -361,6 +369,15 @@ typedef struct Enum_Expression
     Enum_Member* members;
     bool is_decl;
 } Enum_Expression;
+
+typedef struct Directive_Expression
+{
+    struct Expression;
+    
+    Identifier name;
+    Argument* arguments;
+} Directive_Expression;
+
 // NOTE: Used for storing expressions on the stack
 typedef union Any_Expression
 {

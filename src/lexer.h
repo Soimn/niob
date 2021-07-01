@@ -23,6 +23,7 @@ enum TOKEN_KIND
     Token_At,                                   // @
     Token_Underscore,                           // _
     Token_QuestionMark,                         // ?
+    Token_Pound,                                // #
     
     Token_FirstAssignment,
     Token_Equals = Token_FirstAssignment,       // =
@@ -308,6 +309,7 @@ LexText(Workspace* workspace, String text, Memory_Arena* token_arena, Memory_Are
             case '$': token->kind = Token_Cash;         break;
             case '@': token->kind = Token_At;           break;
             case '?': token->kind = Token_QuestionMark; break;
+            case '#': token->kind = Token_Pound;        break;
             
             case '+':
             {

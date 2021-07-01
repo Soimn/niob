@@ -390,5 +390,33 @@ else
 ## Attributes, directives, notes and metaprogramming
 
 Symbols at disposal
-* @
-* #
+ * @
+ * #
+
+Concepts that needs to be expressed
+ * source code location
+ * load file as string literal
+ * AST level c style include
+ * calling convention
+ * packing, alignment and order of structs
+
+@ for changing
+# for adding
+
+Hello :: proc "c" (caller_loc := #caller_location)
+{
+	location := #source_location;
+}
+
+Hello :: @callconv("c") proc(caller_loc := #caller_location)
+{
+	location := #source_location;
+}
+
+@default_callconv("c")
+{
+	Hello :: proc(caller_loc := #caller_location)
+	{
+		location := #source_location;
+	}
+}
