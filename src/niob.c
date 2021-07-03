@@ -53,6 +53,26 @@ System_FreeMemory(void* ptr)
     VirtualFree(ptr, 0, MEM_RELEASE);
 }
 
+bool
+System_ReadFile(String path, Memory_Arena* arena, String* result)
+{
+    bool succeeded = false;
+    
+    NOT_IMPLEMENTED;
+    
+    return succeeded;
+}
+
+bool
+System_FindNextFileInDir(String directory, void** state, String* file)
+{
+    bool found_file = false;
+    
+    NOT_IMPLEMENTED;
+    
+    return found_file;
+}
+
 #elif __linux__
 
 void*
@@ -74,16 +94,32 @@ System_FreeMemory(void* ptr)
 #endif
 
 #include "memory.h"
+#include "string.h"
 
 #include "lexer.h"
+#include "checker.h"
 #include "parser.h"
 
 Workspace*
-WS_Open()
+WS_Open(Workspace_Options options)
 {
-    Workspace* workspace = 0;
+    static Workspace workspace_stub = {0};
     
-    NOT_IMPLEMENTED;
+    Workspace* workspace = &workspace_stub;
+    
+    void* memory = System_AllocateMemory(sizeof(Workspace));
+    
+    if (memory != 0)
+    {
+        workspace = memory;
+        ZeroStruct(workspace);
+        
+        Path_Label predefined_labels[] = {
+            { .name = STR("core"), .path = STR("./core") } // TODO: ./core
+        };
+        
+        NOT_IMPLEMENTED;
+    }
     
     return workspace;
 }
@@ -97,39 +133,168 @@ WS_Close(Workspace* workspace)
 void
 WS_AddFile(Workspace* workspace, String file_path)
 {
-    NOT_IMPLEMENTED;
+    String text;
+    if (!System_ReadFile(file_path, &workspace->file_arena, &text))
+    {
+        //// ERROR: Failed to open file
+    }
+    
+    else
+    {
+        umm element_count = BA_ElementCount(&workspace->files);
+        ASSERT(element_count < ~(File_ID)0);
+        
+        File_ID file_id = (File_ID)element_count;
+        File* file      = BA_Push(&workspace->files);
+        
+        file->path     = file_path;
+        file->contents = text;
+        
+        *(File_ID*)BA_Push(&((Package*)BA_ElementAt(&workspace->packages, MAIN_PACKAGE))->files) = file_id;
+        
+        if (!ParseText(workspace, MAIN_PACKAGE, file_id, text, &workspace->arena, &workspace->tmp_arena, &workspace->arena))
+        {
+            //// ERROR
+        }
+    }
+}
+
+Package_ID
+WS_AddPackage(Workspace* workspace, String package_path)
+{
+    // NOTE: the main package has no path, used as invalid value in this function
+    Package_ID result = MAIN_PACKAGE;
+    
+    for (BA_Iterator it = BA_Iterate(&workspace->packages, 0);
+         it.current != 0;
+         it = BA_Iterate(&workspace->packages, &it))
+    {
+        Package* package = it.current;
+        
+        if (StringCompare(package_path, package->path))
+        {
+            result = (Package_ID)it.index;
+            break;
+        }
+    }
+    
+    if (result == MAIN_PACKAGE)
+    {
+        // NOTE: Package does not already exist, import package
+        
+        umm element_count = BA_ElementCount(&workspace->packages);
+        ASSERT(element_count < ~(Package_ID)0);
+        
+        result = (Package_ID)element_count;
+        
+        Package* package = BA_Push(&workspace->packages);
+        ZeroStruct(package);
+        
+        package->name = DirectoryName(package_path);
+        package->path = package_path;
+        
+        void* state = 0;
+        String file_path;
+        while (System_FindNextFileInDir(package_path, &state, &file_path))
+        {
+            String text;
+            if (!System_ReadFile(file_path, &workspace->file_arena, &text))
+            {
+                //// ERROR: Failed to open file
+                break;
+            }
+            
+            else
+            {
+                element_count = BA_ElementCount(&workspace->files);
+                ASSERT(element_count < ~(File_ID)0);
+                
+                File_ID file_id = (File_ID)element_count;
+                File* file      = BA_Push(&workspace->files);
+                
+                file->path     = file_path;
+                file->contents = text;
+                
+                *(File_ID*)BA_Push(&((Package*)BA_ElementAt(&workspace->packages, result))->files) = file_id;
+                
+                if (!ParseText(workspace, result, file_id, text, &workspace->arena, &workspace->tmp_arena, &workspace->arena))
+                {
+                    //// ERROR
+                    break;
+                }
+            }
+        }
+    }
+    
+    return result;
 }
 
 bool
-WS_RequestDeclaration(Workspace* workspace, Declaration* declaration)
+WS_RequestDeclaration(Workspace* workspace, TUnit* result)
 {
     bool declarations_left = false;
     
-    NOT_IMPLEMENTED;
+    for (BA_Iterator it = BA_Iterate(&workspace->unchecked_units, 0);
+         it.current != 0;
+         it = BA_Iterate(&workspace->unchecked_units, &it))
+    {
+        TUnit* unit = it.current;
+        
+        if (unit->kind != TUnit_Invalid)
+        {
+            Enum8(TU_CHECK_STATUS) check_status = TU_Check(workspace, unit);
+            
+            if (check_status == TUCheck_Valid)
+            {
+                *result = *unit;
+                
+                BA_Remove(&workspace->unchecked_units, it.index);
+                
+                // NOTE: There might not be any declarations left once this is removed, but
+                //       assume there is and check on the next call to this function
+                declarations_left = true;
+                
+                break;
+            }
+            
+            else if (check_status == TUCheck_Error) break;
+            else                                    continue;
+        }
+    }
     
     return declarations_left;
 }
 
 void
-WS_ResubmitDeclaration(Workspace* workspace, Declaration declaration)
+WS_ResubmitDeclaration(Workspace* workspace, TUnit old_unit)
 {
-    NOT_IMPLEMENTED;
+    TUnit* unit = BA_Add(&workspace->unchecked_units);
+    
+    if (!TU_Init(unit, old_unit.package, old_unit.file, old_unit.statement))
+    {
+        //// ERROR:
+    }
 }
 
 void
-WS_CommitDeclaration(Workspace* workspace, Declaration declaration)
+WS_CommitDeclaration(Workspace* workspace, TUnit old_unit)
 {
-    NOT_IMPLEMENTED;
+    TUnit* unit = BA_Add(&workspace->committed_units);
+    
+    if (!TU_Init(unit, old_unit.package, old_unit.file, old_unit.statement))
+    {
+        //// ERROR:
+    }
+    
+    else
+    {
+        unit->symbol_table = old_unit.symbol_table;
+        NOT_IMPLEMENTED;
+    }
 }
 
 void
 WS_GenerateCode(Workspace* workspace)
-{
-    NOT_IMPLEMENTED;
-}
-
-void
-WS_FlushErrorBuffer(Workspace* workspace)
 {
     NOT_IMPLEMENTED;
 }
@@ -139,6 +304,7 @@ WS_GetIdentifier(Workspace* workspace, String string)
 {
     Identifier result = 0;
     
+    // TODO: BLANK_IDENTIFIER must refer to _
     NOT_IMPLEMENTED;
     
     return result;

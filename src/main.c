@@ -4,22 +4,26 @@
 int
 main(int argc, const char** argv)
 {
-    Workspace* workspace = WS_Open();
+    Workspace_Options workspace_options = {
+        0
+    };
+    
+    Workspace* workspace = WS_Open(workspace_options);
     
     WS_AddFile(workspace, STR("main.n"));
     
-    for (Declaration declaration; WS_RequestDeclaration(workspace, &declaration); )
+    for (TUnit translation_unit; WS_RequestDeclaration(workspace, &translation_unit); )
     {
         // either this
         {
             // modify declaration
             
-            WS_ResubmitDeclaration(workspace, declaration);
+            WS_ResubmitDeclaration(workspace, translation_unit);
         }
         
         // or that
         {
-            WS_CommitDeclaration(workspace, declaration);
+            WS_CommitDeclaration(workspace, translation_unit);
         }
     }
     

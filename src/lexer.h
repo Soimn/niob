@@ -195,6 +195,12 @@ Lexer_AdvanceCursor(Lexer* lexer)
     }
 }
 
+void
+Lexer_ReportError(Lexer* lexer, ...)
+{
+    NOT_IMPLEMENTED;
+}
+
 bool
 LexText(Workspace* workspace, String text, Memory_Arena* token_arena, Memory_Arena* string_arena, Bucket_Array(Token)* token_array)
 {

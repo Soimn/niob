@@ -1,9 +1,16 @@
 typedef struct Parser_State
 {
+    Workspace* workspace;
     Memory_Arena* arena;
     Bucket_Array(Token)* tokens;
     BA_Iterator current_token;
 } Parser_State;
+
+void
+Parser_ReportError(Parser_State state, ...)
+{
+    NOT_IMPLEMENTED;
+}
 
 Token
 GetToken(Parser_State state)
@@ -139,6 +146,42 @@ bool ParseExpression(Parser_State state, Expression** expression);
 bool ParseBlockStatement(Parser_State state, Block_Statement* block);
 
 bool
+RequiresSemicolon(Statement* statement)
+{
+    bool result = true;
+    
+    if (statement->kind == Statement_Defer ||
+        statement->kind == Statement_For   ||
+        statement->kind == Statement_While ||
+        statement->kind == Statement_When  ||
+        statement->kind == Statement_If    ||
+        statement->kind == Statement_Block)
+    {
+        result = false;
+    }
+    
+    else if (statement->kind == Statement_ConstantDecl && ((Constant_Declaration*)statement)->values->next == 0)
+    {
+        Expression* value = ((Constant_Declaration*)statement)->values;
+        
+        if (value->kind == Expr_Proc && (((Proc_Expression*)value)->body != 0 || ((Proc_Expression*)value)->is_decl) ||
+            value->kind == Expr_Struct ||
+            value->kind == Expr_Union  ||
+            value->kind == Expr_Enum)
+        {
+            result = false;
+        }
+    }
+    
+    else if (statement->kind == Statement_ForeignDecl && ((Foreign_Declaration*)statement)->body != 0)
+    {
+        result = false;
+    }
+    
+    return result;
+}
+
+bool
 ParseArgumentList(Parser_State state, Argument** arguments)
 {
     bool encountered_errors = false;
@@ -199,7 +242,7 @@ ParseAttributes(Parser_State state, Attribute** attributes)
             Attribute* attribute = Arena_PushSize(state.arena, sizeof(Attribute), ALIGNOF(Attribute));
             ZeroStruct(attribute);
             
-            if (prev_attribute == 0) attributes           = attribute;
+            if (prev_attribute == 0) *attributes          = attribute;
             else                     prev_attribute->next = attribute;
             prev_attribute = attribute;
             
@@ -996,7 +1039,7 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
         
         else if (token.kind == Token_Pound)
         {
-            Directive_Expression directive_expr = PushExpression(state, Expr_Directive);
+            Directive_Expression* directive_expr = PushExpression(state, Expr_Directive);
             *expression = (Expression*)directive_expr;
             
             SkipPastCurrentToken(state);
@@ -1028,7 +1071,7 @@ ParsePrimaryExpression(Parser_State state, Expression** expression)
                     
                     if (token.kind != Token_CloseParen)
                     {
-                        if (!ParseArgumentList(state, &attribute->arguments))
+                        if (!ParseArgumentList(state, &directive_expr->arguments))
                         {
                             encountered_errors = true;
                         }
@@ -1510,7 +1553,215 @@ ParseStatement(Parser_State state, Statement** statement, Any_Statement* memory)
     {
         if (token.keyword == Keyword_Using || token.keyword == Keyword_Import || token.keyword == Keyword_Foreign)
         {
-            NOT_IMPLEMENTED;
+            if (token.keyword == Keyword_Foreign || peek.keyword == Keyword_Foreign)
+            {
+                if (token.keyword == Keyword_Using)
+                {
+                    //// ERROR: Using is not applicable on foreign import declarations
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    Foreign_Declaration* foreign_decl = PushStatement(state, Statement_ForeignDecl, memory);
+                    *statement = (Statement*)foreign_decl;
+                    
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind == Token_Identifier && token.keyword == Keyword_Import)
+                    {
+                        SkipPastCurrentToken(state);
+                        token = GetToken(state);
+                        
+                        if (token.kind != Token_String)
+                        {
+                            //// ERROR: Missing foreign import path string
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            foreign_decl->is_decl = true;
+                            foreign_decl->path    = token.string;
+                            
+                            SkipPastCurrentToken(state);
+                            token = GetToken(state);
+                            
+                            if (token.kind == Token_Identifier && token.keyword == Keyword_As)
+                            {
+                                SkipPastCurrentToken(state);
+                                token = GetToken(state);
+                                
+                                if (token.kind != Token_Identifier)
+                                {
+                                    //// ERROR: Missing name of foreign import alias
+                                    encountered_errors = true;
+                                }
+                                
+                                else if (token.keyword != Keyword_Invalid)
+                                {
+                                    //// ERROR: Invalid use of keyword as alias for foreign import
+                                    encountered_errors = true;
+                                }
+                                
+                                else if (token.identifier == BLANK_IDENTIFIER)
+                                {
+                                    //// ERROR: Illegal use of blank identifier as foreign import alias
+                                    encountered_errors = true;
+                                }
+                                
+                                else
+                                {
+                                    foreign_decl->alias = token.identifier;
+                                    
+                                    SkipPastCurrentToken(state);
+                                }
+                            }
+                        }
+                    }
+                    
+                    else
+                    {
+                        if (token.kind != Token_Identifier)
+                        {
+                            //// ERROR: Missing name of foreign library in foreign block
+                            encountered_errors = true;
+                        }
+                        
+                        else if (token.keyword != Keyword_Invalid)
+                        {
+                            //// ERROR: Invalid use of keyword as name of foreign library
+                            encountered_errors = true;
+                        }
+                        
+                        else if (token.identifier == BLANK_IDENTIFIER)
+                        {
+                            //// ERROR: Illegal use of blank identifier as foreign library name
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            foreign_decl->is_decl = false;
+                            foreign_decl->alias   = token.identifier;
+                            
+                            SkipPastCurrentToken(state);
+                        }
+                    }
+                    
+                    if (!encountered_errors)
+                    {
+                        token = GetToken(state);
+                        
+                        if (token.kind == Token_OpenBrace)
+                        {
+                            SkipPastCurrentToken(state);
+                            token = GetToken(state);
+                            
+                            if (token.kind != Token_CloseBrace)
+                            {
+                                Statement* prev_decl = 0;
+                                while (!encountered_errors)
+                                {
+                                    Statement* decl;
+                                    if (!ParseStatement(state, &decl, 0)) encountered_errors = true;
+                                    else
+                                    {
+                                        if (prev_decl == 0) foreign_decl->body = decl;
+                                        else                prev_decl->next    = decl;
+                                        prev_decl = decl;
+                                        
+                                        token = GetToken(state);
+                                        if (token.kind == Token_Semicolon) SkipPastCurrentToken(state);
+                                        else if (RequiresSemicolon(decl))
+                                        {
+                                            //// ERROR: Missing terminating semicolon
+                                            encountered_errors = true;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if (!encountered_errors)
+                            {
+                                token = GetToken(state);
+                                
+                                if (token.kind == Token_CloseBrace) SkipPastCurrentToken(state);
+                                else
+                                {
+                                    //// ERROR: Missing matching closing brace
+                                    encountered_errors = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            else
+            {
+                Import_Declaration* import_decl = PushStatement(state, Statement_ImportDecl, memory);
+                *statement = (Statement*)import_decl;
+                
+                if (token.keyword == Keyword_Using)
+                {
+                    import_decl->is_using = true;
+                    
+                    SkipPastCurrentToken(state);
+                }
+                
+                token = GetToken(state);
+                ASSERT(token.kind == Token_Identifier && token.keyword == Keyword_Import);
+                
+                SkipPastCurrentToken(state);
+                token = GetToken(state);
+                
+                if (token.kind != Token_String)
+                {
+                    //// ERROR: Missing import path string
+                    encountered_errors = true;
+                }
+                
+                else
+                {
+                    import_decl->path = token.string;
+                    
+                    SkipPastCurrentToken(state);
+                    token = GetToken(state);
+                    
+                    if (token.kind == Token_Identifier && token.keyword == Keyword_As)
+                    {
+                        SkipPastCurrentToken(state);
+                        token = GetToken(state);
+                        
+                        if (token.kind != Token_Identifier)
+                        {
+                            //// ERROR: Missing import alias after 'as'
+                            encountered_errors = true;
+                        }
+                        
+                        else if (token.keyword != Keyword_Invalid)
+                        {
+                            //// ERROR: Invalid use of keyword as import alias
+                            encountered_errors = true;
+                        }
+                        
+                        else if (token.identifier == BLANK_IDENTIFIER)
+                        {
+                            //// ERROR: Illegal use of blank identifier as import alias
+                            encountered_errors = true;
+                        }
+                        
+                        else
+                        {
+                            import_decl->alias = token.identifier;
+                            
+                            SkipPastCurrentToken(state);
+                        }
+                    }
+                }
+            }
         }
         
         else
@@ -1730,7 +1981,7 @@ ParseStatement(Parser_State state, Statement** statement, Any_Statement* memory)
                         prev_expr = expression;
                         
                         token = GetToken(state);
-                        if (token.kind == Token_Semicolon) SkipPastCurrentToken(state);
+                        if (token.kind == Token_Comma) SkipPastCurrentToken(state);
                         else break;
                     }
                 }
@@ -2171,7 +2422,7 @@ ParseBlockStatement(Parser_State state, Block_Statement* block)
                     
                     token = GetToken(state);
                     if (token.kind == Token_Semicolon) SkipPastCurrentToken(state);
-                    else
+                    else if (RequiresSemicolon(statement))
                     {
                         //// ERROR: Missing terminating semicolon after statement
                         encountered_errors = true;
@@ -2187,15 +2438,17 @@ ParseBlockStatement(Parser_State state, Block_Statement* block)
 }
 
 bool
-ParseText(Workspace* workspace, String text, Memory_Arena* ast_arena, Memory_Arena* token_arena, Memory_Arena* string_arena)
+ParseText(Workspace* workspace, Package_ID package, File_ID file, String text,
+          Memory_Arena* ast_arena, Memory_Arena* token_arena, Memory_Arena* string_arena)
 {
     bool encountered_errors = false;
     
     Bucket_Array(Token) tokens;
     
     Parser_State state = {0};
-    state.arena  = ast_arena;
-    state.tokens = &tokens;
+    state.workspace = workspace;
+    state.arena     = ast_arena;
+    state.tokens    = &tokens;
     
     if (!LexText(workspace, text, token_arena, string_arena, &tokens)) encountered_errors = true;
     else
@@ -2210,8 +2463,18 @@ ParseText(Workspace* workspace, String text, Memory_Arena* ast_arena, Memory_Are
             else if (token.kind == Token_Semicolon) SkipPastCurrentToken(state);
             else
             {
-                NOT_IMPLEMENTED;
-                // TODO: wrap statement in declaration
+                Statement* statement = 0;
+                if (!ParseStatement(state, &statement, 0)) encountered_errors = true;
+                else
+                {
+                    TUnit* unit = BA_Add(&workspace->unchecked_units);
+                    
+                    if (!TU_Init(unit, package, file, statement))
+                    {
+                        //// ERROR: Illegal top level statement
+                        encountered_errors = true;
+                    }
+                }
             }
         }
     }

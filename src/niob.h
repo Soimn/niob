@@ -62,9 +62,12 @@ typedef struct String
 typedef u32 Identifier;
 typedef u32 Character;
 typedef u32 Scope_ID;
+typedef u32 Package_ID;
+typedef u32 File_ID;
+typedef u32 Type_ID;
 
-#define BLANK_IDENTIFIER 0
-#define IDENTIFIER_TABLE_BLOCK_SIZE 2048
+#define BLANK_IDENTIFIER (Identifier)0
+#define MAIN_PACKAGE     (Package_ID)0
 
 typedef struct Memory_Arena
 {
@@ -80,10 +83,11 @@ typedef struct Bucket_Array
     Memory_Arena* arena;
     struct Bucket* first;
     struct Bucket* current;
-    umm bucket_capacity;
-    umm current_bucket_size;
-    umm bucket_count;
-    umm element_size;
+    u64 bucket_capacity;
+    u64 current_bucket_size;
+    u64 bucket_count;
+    u64 element_size;
+    void* free_list;
     
     struct Bucket* bucket_cache[BUCKET_ARRAY_BUCKET_CACHE_SIZE];
 } Bucket_Array;
@@ -383,6 +387,7 @@ typedef union Any_Expression
 {
     Unary_Expression unary_expression;
     Binary_Expression binary_expression;
+    Conditional_Expression conditional_expression;
     ArrayType_Expression arraytype_expression;
     Subscript_Expression subscript_expression;
     Slice_Expression slice_expression;
@@ -394,6 +399,7 @@ typedef union Any_Expression
     Proc_Expression proc_expression;
     Struct_Expression struct_expression;
     Enum_Expression enum_expression;
+    Directive_Expression directive_expression;
 } Any_Expression;
 
 enum STATEMENT_KIND
@@ -402,7 +408,6 @@ enum STATEMENT_KIND
     
     Statement_Expression,
     Statement_Block,
-    Statment_Declaration,
     
     Statement_If,
     Statement_When,
@@ -420,6 +425,7 @@ enum STATEMENT_KIND
     Statement_VariableDecl,
     Statement_ConstantDecl,
     Statement_ImportDecl,
+    Statement_ForeignDecl,
 };
 
 typedef struct Statement
@@ -541,7 +547,18 @@ typedef struct Import_Declaration
     
     String path;
     Identifier alias;
+    bool is_using;
 } Import_Declaration;
+
+typedef struct Foreign_Declaration
+{
+    struct Statement;
+    
+    String path;
+    Identifier alias;
+    struct Statement* body;
+    bool is_decl;
+} Foreign_Declaration;
 
 // NOTE: Used for storing statements on the stack
 typedef struct Any_Statement
@@ -559,62 +576,186 @@ typedef struct Any_Statement
     Variable_Declaration variable_declaration;
     Constant_Declaration constant_declaration;
     Import_Declaration import_declaration;
-    
+    Foreign_Declaration foreign_declaration;
 } Any_Statement;
-
-enum DECLARATION_KIND
-{
-    Decl_Invalid = 0,
-    
-    Decl_Proc,
-    Decl_Struct,
-    Decl_Union,
-    Decl_Enum,
-    Decl_Variable,
-    Decl_Constant,
-    Decl_Import,
-};
-
-typedef struct Declaration
-{
-    Enum8(DECLARATION_KIND) kind;
-    Statement* statement;
-} Declaration;
 
 ///////////////////////////////////////////////////////////////////////////////
 
+enum SYMBOL_KIND
+{
+    Symbol_Invalid = 0,
+    
+    Symbol_Var,
+    Symbol_Const,
+    Symbol_Proc,
+    Symbol_Type,
+    Symbol_Package,
+    
+    // TODO: using
+};
+
+typedef struct Symbol
+{
+    String name;
+    Statement* ast;
+} Symbol;
+
+typedef struct Symbol_Table
+{
+    struct Symbol_Table* parent;
+    struct Symbol_Table* next;
+    struct Symbol_Table* children;
+} Symbol_Table;
+
+enum TYPE_INFO_KIND
+{
+    TypeInfo_Invalid = 0,
+    
+    TypeInfo_Int,
+    TypeInfo_Float,
+    TypeInfo_Bool,
+    TypeInfo_String,
+    TypeInfo_Any,
+    TypeInfo_TypeID,
+    TypeInfo_Pointer,
+    TypeInfo_Slice,
+    TypeInfo_Array,
+    TypeInfo_DynamicArray,
+} TYPE_INFO_KIND;
+
+typedef struct Type_Info
+{
+    Enum8(TYPE_INFO_KIND) kind;
+    
+    union
+    {
+        struct
+        {
+            u8 size;
+            bool is_signed;
+        } integer;
+        
+        struct
+        {
+            u8 size;
+        } floating;
+        
+        struct
+        {
+            Type_ID type;
+        } pointer;
+        
+        struct
+        {
+            Type_ID type;
+        } slice;
+        
+        struct
+        {
+            u64 size;
+            Type_ID type;
+        } array;
+        
+        struct
+        {
+            Type_ID type;
+        } dynamic_array;
+    };
+} Type_Info;
+
+enum TRANSLATION_UNIT_KIND
+{
+    TUnit_Invalid = 0,
+    
+    TUnit_Proc,
+    TUnit_ProcDecl,
+    TUnit_Struct,
+    TUnit_Union,
+    TUnit_Enum,
+    TUnit_Variable,
+    TUnit_Constant,
+    TUnit_Import,
+    TUnit_Foreign,
+    TUnit_When,
+};
+
+typedef struct TUnit
+{
+    Package_ID package;
+    File_ID file;
+    Symbol_Table* symbol_table;
+    Statement* statement;
+    Enum8(TRANSLATION_UNIT_KIND) kind;
+} TUnit;
+
+///////////////////////////////////////////////////////////////////////////////
+
+typedef struct File
+{
+    String path;
+    String contents;
+} File;
+
+typedef struct Package
+{
+    String name;
+    String path;
+    Bucket_Array(File_ID) files;
+} Package;
+
+typedef struct Error
+{
+    String message;
+} Error;
+
+typedef struct Path_Label
+{
+    String name;
+    String path;
+} Path_Label;
+
+typedef struct Workspace_Options
+{
+    Path_Label labels;
+    u64 label_count;
+} Workspace_Options;
+
 typedef struct Workspace
 {
-    // resources
+    Memory_Arena arena;
+    Memory_Arena file_arena;
+    Memory_Arena tmp_arena;
     
-    // store files
-    // temp
-    // store declarations (buckets)
-    // store identifiers (buckets)
+    Path_Label* labels;
+    Bucket_Array(File) files;
+    Bucket_Array(Package) packages;
+    
+    Bucket_Array(Type_Info) type_table;
+    
+    Bucket_Array(TUnit) unchecked_units;
+    Bucket_Array(TUnit) committed_units;
     
     Bucket_Array(Identifier) identifier_table;
     
-    // unchecked declarations
-    // committed declarations
-    
-    // error buffer
+    Bucket_Array(Error) errors;
+    bool is_valid;
 } Workspace;
 
-Workspace* WS_Open(void);
+Workspace* WS_Open(Workspace_Options options);
 void WS_Close(Workspace* workspace);
 
 void WS_AddFile(Workspace* workspace, String file_path);
+Package_ID WS_AddPackage(Workspace* workspace, String package_path);
 
-bool WS_RequestDeclaration(Workspace* workspace, Declaration* declaration);
-void WS_ResubmitDeclaration(Workspace* workspace, Declaration declaration);
-void WS_CommitDeclaration(Workspace* workspace, Declaration declaration);
+bool WS_RequestUnit(Workspace* workspace, TUnit* result);
+void WS_ResubmitUnit(Workspace* workspace, TUnit unit);
+void WS_CommitUnit(Workspace* workspace, TUnit unit);
 
 void WS_GenerateCode(Workspace* workspace);
 
-void WS_FlushErrorBuffer(Workspace* workspace);
 Identifier WS_GetIdentifier(Workspace* workspace, String string);
 
-
+// NOTE: Utility functions for provided memory management structures
 void* Arena_PushSize(Memory_Arena* arena, umm size, u8 alignment);
 void  Arena_ClearAll(Memory_Arena* arena);
 void  Arena_FreeAll(Memory_Arena* arena);
@@ -624,5 +765,6 @@ void  BA_Pop(Bucket_Array* array, void* value);
 umm   BA_ElementCount(Bucket_Array* array);
 void* BA_ElementAt(Bucket_Array* array, umm index);
 void  BA_ClearAll(Bucket_Array* array);
+//
 
 #endif

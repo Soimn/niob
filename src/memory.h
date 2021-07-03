@@ -209,6 +209,36 @@ BA_ClearAll(Bucket_Array* array)
     array->bucket_count        = 0;
 }
 
+void*
+BA_Add(Bucket_Array* array)
+{
+    void* result;
+    
+    if (array->free_list != 0)
+    {
+        result = array->free_list;
+        array->free_list = *(void**)array->free_list;
+        
+        Zero(result, array->element_size);
+    }
+    
+    else result = BA_Push(array);
+    
+    return result;
+}
+
+void
+BA_Remove(Bucket_Array* array, umm index)
+{
+    if (array->element_size >= sizeof(u64))
+    {
+        void* pointer = BA_ElementAt(array, index);
+        
+        Zero(pointer, array->element_size);
+        *(void**)pointer = array->free_list;
+    }
+}
+
 typedef struct BA_Iterator
 {
     umm index;
